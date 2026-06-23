@@ -2,7 +2,55 @@
 
 This document outlines the planned development roadmap for Telos.
 
-## Version 0.2.0 - TUI Integration
+## [0.2.0] - Released
+
+### Goal Chains (Evolutionary Goal Management)
+- [x] **Reproductive Clause System**
+  - Primary goal with essential principles
+  - Mutation guidelines for conservative evolution
+  - Invariant constraints that must be preserved
+  - Lifeline caching for recovery
+
+- [x] **Sub-Goal Management**
+  - Hierarchical decomposition of primary goals
+  - Status tracking: pending, active, complete, blocked
+  - Learnings collection from completed sub-goals
+  - Token budget tracking per sub-goal
+
+- [x] **Record Space**
+  - Accumulation of goal events and learnings
+  - Pattern recognition for inference
+  - Mutation history and reasoning
+  - Success/failure tracking
+
+- [x] **Evolutionary Mechanisms**
+  - Conservative mutation of reproductive clause
+  - Multi-generational goal evolution
+  - Learnings-driven adaptation
+  - Non-deterministic model generations
+
+- [x] **User Commands**
+  - `/goalchain create <primary_goal>` - Create new chain
+  - `/goalchain list` - List all chains
+  - `/goalchain show <id>` - View chain details
+  - `/goalchain infer <id>` - Infer sub-goals
+  - `/goalchain delete <id>` - Delete chain
+
+- [x] **LLM Tools**
+  - `get_goal_chain` - Retrieve chain information
+  - `create_goal_chain` - Create new chain
+  - `add_sub_goals` - Add sub-goals
+  - `update_sub_goal_status` - Update with learnings
+  - `mutate_reproductive_clause` - Evolve chain
+  - `infer_sub_goals` - Infer from record space
+
+### Documentation
+- [x] Updated README with goal chain examples
+- [x] Added evolutionary concepts explanation
+- [x] Documented single goals vs goal chains
+- [x] Advanced features section
+
+## Version 0.3.0 - TUI Integration
 
 ### Priority 1 Features
 - [ ] **Goal Status in TUI Footer**
@@ -11,11 +59,17 @@ This document outlines the planned development roadmap for Telos.
   - Show token budget progress bar
   - Click to view full goal details
 
-- [ ] **Goal Widget**
-  - Dedicated widget showing goal information
-  - Status icon with color coding
-  - Progress indicators
-  - Quick action buttons (pause/resume/clear)
+- [ ] **Goal Chain Widget**
+  - Display active goal chain status
+  - Show primary goal and generation
+  - Sub-goal progress visualization
+  - Quick access to chain details
+
+- [ ] **Evolution Visualization**
+  - Show reproductive clause version
+  - Display learnings count
+  - Mutation history timeline
+  - Generation progression indicator
 
 - [ ] **Enhanced Goal Display**
   - Syntax highlighting for objectives
@@ -28,7 +82,7 @@ This document outlines the planned development roadmap for Telos.
 - [ ] Add TUI section to EXAMPLES.md
 - [ ] Document TUI-specific features
 
-## Version 0.3.0 - Goal Editing & Files
+## Version 0.4.0 - Goal Editing & Files
 
 ### Priority 1 Features
 - [ ] **`/goal edit` Command**
@@ -49,12 +103,18 @@ This document outlines the planned development roadmap for Telos.
   - Custom template creation
   - Template management commands
 
+- [ ] **Reproductive Clause Editing**
+  - Edit primary goal conservatively
+  - Modify essential principles
+  - Update mutation guidelines
+  - Version history tracking
+
 ### Documentation
 - [ ] Goal editing guide
 - [ ] Template documentation
 - [ ] File-based objective examples
 
-## Version 0.4.0 - Enhanced Continuation
+## Version 0.5.0 - Enhanced Continuation
 
 ### Priority 2 Features
 - [ ] **Smart Continuation**
@@ -69,6 +129,12 @@ This document outlines the planned development roadmap for Telos.
   - Continuation history and analytics
   - Continuation undo capability
 
+- [ ] **Chain-Aware Continuation**
+  - Sub-goal focused continuation
+  - Generation-aware prompts
+  - Learnings integration
+  - Evolutionary steering
+
 - [ ] **Progress Tracking**
   - Track progress toward goal completion
   - Milestone tracking
@@ -80,7 +146,7 @@ This document outlines the planned development roadmap for Telos.
 - [ ] Progress tracking features
 - [ ] Configuration options
 
-## Version 0.5.0 - Analytics & Reporting
+## Version 0.6.0 - Analytics & Reporting
 
 ### Priority 2 Features
 - [ ] **Goal Statistics**
@@ -88,6 +154,12 @@ This document outlines the planned development roadmap for Telos.
   - Token usage analytics
   - Turn count tracking
   - Completion rate statistics
+
+- [ ] **Goal Chain Analytics**
+  - Generation-by-generation analysis
+  - Mutation effectiveness tracking
+  - Learning quality assessment
+  - Evolution trajectory visualization
 
 - [ ] **Usage Reports**
   - Per-session goal reports
@@ -106,35 +178,47 @@ This document outlines the planned development roadmap for Telos.
 - [ ] Reporting documentation
 - [ ] Metrics explanation
 
-## Version 1.0.0 - Multi-Goal & Advanced Features
+## Version 1.0.0 - Advanced Goal Chains & Multi-Chain
 
 ### Priority 3 Features
-- [ ] **Multi-Goal Support**
-  - Multiple active goals
-  - Goal prioritization
-  - Goal dependencies
-  - Goal grouping
+- [ ] **Multi-Chain Management**
+  - Multiple concurrent goal chains
+  - Chain dependencies and coordination
+  - Cross-chain learnings transfer
+  - Chain merging and splitting
+
+- [ ] **Advanced Evolution**
+  - Adaptive mutation rates
+  - Confidence-based evolution
+  - Rollback capabilities
+  - Branching evolution paths
+
+- [ ] **Enhanced Inference**
+  - Machine learning-based pattern recognition
+  - Predictive sub-goal suggestion
+  - Automated constraint detection
+  - Success probability estimation
 
 - [ ] **Advanced Budgeting**
-  - Time budgets
+  - Time budgets per chain/sub-goal
   - Turn count limits
   - Per-tool budgets
-  - Budget inheritance
+  - Budget inheritance across generations
 
 - [ ] **Integration Features**
-  - GitHub issue → goal conversion
+  - GitHub issue → goal chain conversion
   - Project file scanning for goals
-  - Goal sharing between sessions
+  - Goal chain sharing between sessions
   - Goal templates from issues
 
 - [ ] **Goal Collaboration**
-  - Share goals with team
-  - Goal comments and notes
-  - Goal assignment
-  - Team goal boards
+  - Share goal chains with team
+  - Chain comments and notes
+  - Collaborative evolution
+  - Team chain boards
 
 ### Documentation
-- [ ] Multi-goal usage guide
+- [ ] Multi-chain usage guide
 - [ ] Advanced features documentation
 - [ ] Integration guide
 - [ ] Collaboration features
@@ -157,16 +241,19 @@ This document outlines the planned development roadmap for Telos.
 - [ ] Goal priority algorithms
 - [ ] Token budget prediction
 - [ ] Goal completion prediction
+- [ ] Evolutionary mutation strategies
+- [ ] Learning quality assessment
 
 ## Version Timeline
 
 | Version | Target Release | Status |
 |---------|---------------|--------|
 | 0.1.0 | 2026-06-23 | ✅ Released |
-| 0.2.0 | TBD | 🔄 Planning |
+| 0.2.0 | 2026-06-23 | ✅ Released |
 | 0.3.0 | TBD | 📋 Planned |
 | 0.4.0 | TBD | 📋 Planned |
 | 0.5.0 | TBD | 📋 Planned |
+| 0.6.0 | TBD | 📋 Planned |
 | 1.0.0 | TBD | 📋 Planned |
 
 ## Contributing to Roadmap
@@ -190,15 +277,16 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines.
 
 Some features depend on others:
 
-- Multi-goal support (v1.0.0) depends on enhanced goal management
-- Advanced analytics (v0.5.0) depends on basic statistics (v0.4.0)
-- Goal templates (v0.3.0) enhance goal editing (v0.3.0)
+- Multi-chain support (v1.0.0) depends on enhanced goal management
+- Advanced analytics (v0.6.0) depends on basic statistics (v0.5.0)
+- Goal templates (v0.4.0) enhance goal editing (v0.4.0)
+- Chain-aware continuation (v0.5.0) depends on goal chains (v0.2.0)
 
 ## Breaking Changes
 
 We aim to minimize breaking changes, but some may be necessary:
 
-- v1.0.0 may introduce breaking changes for multi-goal support
+- v1.0.0 may introduce breaking changes for multi-chain support
 - Major version bumps will include migration guides
 
 ## Feedback Loop
@@ -215,5 +303,5 @@ Your feedback helps us prioritize! Join the discussion in GitHub issues.
 ---
 
 **Last Updated**: 2026-06-23
-**Current Version**: 0.1.0
-**Next Version**: 0.2.0 (Planning)
+**Current Version**: 0.2.0
+**Next Version**: 0.3.0 (Planning)

@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned
+### Added (v0.2.0 - In Development)
+- **Goal Chains**: Evolutionary goal management with reproductive clauses
+- `/goalchain` command for creating and managing goal chains
+- Goal chain LLM tools: get_goal_chain, create_goal_chain, add_sub_goals, update_sub_goal_status, mutate_reproductive_clause, infer_sub_goals
+- Record space for accumulating learnings and evolutionary history
+- Conservative mutation of primary goals across generations
+- Sub-goal inference from record space patterns
+- Deterministic caching for reproductive clause (lifeline)
+- Multi-generational goal evolution
+
+### Planned (Future)
 - TUI integration (goal status in footer, widgets)
 - `/goal edit` command for modifying objectives
 - Goal file support for >4000 char objectives
