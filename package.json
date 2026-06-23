@@ -1,0 +1,35 @@
+{
+  "name": "telos",
+  "version": "0.1.0",
+  "description": "A Pi Coding Assistant extension that brings /goal functionality to Pi, inspired by Codex's persistent thread goal feature",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "clean": "echo 'nothing to clean'",
+    "build": "echo 'nothing to build'",
+    "check": "echo 'nothing to check'",
+    "test": "echo 'tests not implemented yet'"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "keywords": [
+    "pi-extension",
+    "goal",
+    "codex",
+    "thread-management",
+    "persistent-context"
+  ],
+  "author": "somebloke1",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/somebloke1/telos"
+  },
+  "bugs": {
+    "url": "https://github.com/somebloke1/telos/issues"
+  },
+  "homepage": "https://github.com/somebloke1/telos#readme"
+}

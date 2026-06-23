@@ -1,0 +1,350 @@
+# Telos Extension Design Document
+
+## Overview
+
+Telos is a Pi Coding Assistant extension that implements `/goal` functionality inspired by Codex's persistent thread goal feature. This document describes the architecture, design decisions, and implementation details.
+
+## Goals
+
+1. Provide persistent goal tracking across Pi sessions
+2. Enable automatic continuation when goals are active
+3. Give the LLM goal-aware tools and context
+4. Track token usage and enforce budget limits
+5. Maintain compatibility with Pi's extension architecture
+
+## Architecture
+
+### Core Components
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Main Extension                         │
+│                        (src/index.ts)                        │
+├─────────────────────────────────────────────────────────────┤
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────┐  │
+│  │ GoalManager  │  │  GoalTools   │  │ GoalContinuation │  │
+│  │              │  │              │  │                  │  │
+│  │ - State      │  │ - get_goal   │  │ - Auto-continue  │  │
+│  │ - Validation │  │ - create_goal│  │ - Steering msgs  │  │
+│  │ - Persistence│  │ - update_goal│  │ - Budget checks  │  │
+│  └──────────────┘  └──────────────┘  └──────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+                    ┌─────────────────┐
+                    │ Pi Extension API│
+                    │                 │
+                    │ - Events        │
+                    │ - Commands      │
+                    │ - Tools         │
+                    │ - Session Mgr   │
+                    └─────────────────┘
+```
+
+### Data Flow
+
+#### Setting a Goal
+
+```
+User: /goal <objective>
+  ↓
+Command handler validates and creates goal
+  ↓
+GoalManager stores goal in memory
+  ↓
+GoalManager persists goal as custom session entry
+  ↓
+GoalContinuation enables automatic continuation
+```
+
+#### LLM Tool Call
+
+```
+LLM: get_goal()
+  ↓
+GoalTools retrieves goal from GoalManager
+  ↓
+GoalTools formats goal information
+  ↓
+Result returned to LLM with details
+```
+
+#### Automatic Continuation
+
+```
+Turn completes
+  ↓
+GoalContinuation checks:
+  - Is continuation enabled?
+  - Is agent idle?
+  - Is goal active?
+  - Is budget exhausted?
+  ↓
+If all checks pass → Trigger continuation turn
+  ↓
+Inject continuation steering message
+  ↓
+New turn starts with goal context
+```
+
+## Design Decisions
+
+### 1. Session vs. Thread Scoping
+
+**Decision:** Goals are session-scoped (not thread-scoped like Codex)
+
+**Rationale:**
+- Pi uses "sessions" rather than "threads"
+- A Pi session ≈ a Codex thread
+- Simplifies implementation without losing functionality
+- Goals persist via session entries automatically
+
+### 2. Status Model
+
+**Decision:** Five statuses: `active`, `paused`, `blocked`, `complete`, `budget_limited`
+
+**Rationale:**
+- Matches Codex's status enum with minor adjustments
+- Clear semantic meaning for each state
+- Enables proper continuation control
+- Supports both user and LLM status changes
+
+### 3. User vs. LLM Control
+
+**Decision:** Users control pause/resume/clear; LLM controls complete/blocked
+
+**Rationale:**
+- Keeps humans in the loop for session control
+- Prevents LLM from accidentally stopping work
+- Allows LLM to signal completion or blockers
+- Matches Codex's permission model
+
+### 4. Persistence Strategy
+
+**Decision:** Store goals as custom session entries
+
+**Rationale:**
+- Leverages Pi's built-in session persistence
+- No need for additional storage (SQLite, files)
+- Goals automatically survive session reload
+- Compatible with Pi's session branching
+
+**Trade-offs:**
+- Slightly more complex state reconstruction
+- Must scan session entries on load
+- Benefits outweigh complexity
+
+### 5. Continuation Strategy
+
+**Decision:** Inject steering messages rather than modify system prompt
+
+**Rationale:**
+- Less invasive to Pi's prompt engineering
+- Easier to implement and maintain
+- Steering messages can be context-specific
+- Similar to Codex's approach
+
+**Continuation Trigger:**
+- After each turn ends (`turn_end` event)
+- Only when agent is idle
+- Only when goal is active
+- Minimum 2-second interval between continuations
+
+### 6. Token Budget Implementation
+
+**Decision:** Optional budget per goal, tracked across all turns
+
+**Rationale:**
+- Helps control costs for autonomous work
+- User-specified limits prevent runaway token usage
+- Budget exhaustion triggers `budget_limited` status
+- Matches Codex's budget model
+
+**Tracking:**
+- Count tokens from each assistant message
+- Exclude cached input tokens (as Codex does)
+- Update on `message_end` event
+- Check budget after each tool completion
+
+### 7. Tool Constraints
+
+**Decision:** LLM can only create goals when no unfinished goal exists
+
+**Rationale:**
+- Prevents accidental goal replacement
+- Forces explicit user intent for new goals
+- Matches Codex's tool semantics
+- Encourages goal completion
+
+**Allowed LLM operations:**
+- `get_goal` - Always allowed
+- `create_goal` - Only when no unfinished goal exists
+- `update_goal` - Only to `complete` or `blocked`
+
+## Event Integration
+
+### Events We Listen To
+
+| Event | Purpose |
+|-------|---------|
+| `session_start` | Load goal state from session |
+| `session_shutdown` | Cleanup (minimal needed) |
+| `turn_end` | Check if continuation needed |
+| `message_end` | Track token usage |
+| `tool_execution_end` | Handle goal updates |
+
+### Events We Emit
+
+None directly - we use `pi.sendMessage()` and `pi.appendEntry()` instead
+
+## Error Handling
+
+### Validation Errors
+
+- Empty objective → Error message to user
+- Objective too long (>4000 chars) → Error message
+- Invalid status transition → Error message
+- Invalid token budget (≤0) → Error message
+
+### State Errors
+
+- Creating goal when one exists → Error message
+- Updating non-existent goal → Error message
+- Operations on terminal status → Handled gracefully
+
+### Runtime Errors
+
+- Continuation failure → Log error, disable continuation
+- Session load failure → Start fresh (no goal)
+- Budget check failure → Continue without budget enforcement
+
+## Testing Strategy
+
+### Unit Tests (Future)
+
+- GoalManager state transitions
+- GoalTools parameter validation
+- GoalContinuation trigger logic
+- Token budget calculations
+
+### Integration Tests (Manual)
+
+- Full goal lifecycle: create → work → complete
+- Pause/resume functionality
+- Budget limit behavior
+- Session persistence
+- Automatic continuation
+
+### Edge Cases
+
+- Empty objectives
+- Very long objectives
+- Zero/negative budgets
+- Rapid continuation requests
+- Session reload with goal
+
+## Future Enhancements
+
+### Priority 1
+
+1. **Goal visualization in TUI**
+   - Show goal status in footer
+   - Widget displaying current goal
+   - Progress bar for token budget
+
+2. **Goal templates**
+   - Predefined goal templates
+   - Quick goal creation
+   - Template management
+
+3. **File-based objectives**
+   - Read objectives from GOAL.md
+   - Support >4000 char objectives
+   - Edit goal files with `/goal edit`
+
+### Priority 2
+
+4. **Enhanced continuation strategies**
+   - Context-aware continuation prompts
+   - Variable continuation frequency
+   - Smart continuation triggering
+
+5. **Goal analytics**
+   - Time tracking per goal
+   - Token usage statistics
+   - Goal completion rates
+
+6. **Multi-goal support**
+   - Multiple active goals
+   - Goal prioritization
+   - Goal dependencies
+
+### Priority 3
+
+7. **Integration features**
+   - GitHub issue → goal conversion
+   - Project file scanning for goals
+   - Goal sharing between sessions
+
+8. **Advanced budgeting**
+   - Time budgets
+   - Turn count limits
+   - Per-tool budgets
+
+## Performance Considerations
+
+### Token Overhead
+
+- Steering messages: ~200-300 tokens per continuation
+- Goal state in tools: ~100-200 tokens per get_goal
+- Net impact: Minimal relative to typical session size
+
+### Session Size
+
+- Goal entries: ~500 bytes per goal state
+- Accumulation: One entry per significant state change
+- Mitigation: Only persist on state transitions
+
+### Continuation Frequency
+
+- Minimum interval: 2 seconds
+- Prevents runaway loops
+- User can pause anytime
+
+## Security Considerations
+
+### No Security Risks Identified
+
+- No external API calls
+- No file system access beyond Pi's normal operations
+- No code execution beyond Pi's normal operations
+- Goals are user-specified text only
+
+## Compatibility
+
+### Pi Version Compatibility
+
+- Designed for Pi 1.0+
+- Uses stable extension APIs
+- No experimental features
+
+### Future Pi Changes
+
+- Session format changes → May require migration
+- Extension API changes → May require updates
+- Event model changes → May require reimplementation
+
+## References
+
+- [Codex Goal Feature Research](./research/codex_goal_feature_research.md)
+- [Pi Extensions Documentation](https://github.com/earendil-works/pi-mono/tree/main/packages/coding-agent/docs)
+- [OpenAI Codex Repository](https://github.com/openai/codex)
+
+## Changelog
+
+### v0.1.0 (Initial Design)
+
+- Core architecture defined
+- Data flows documented
+- Design decisions justified
+- Future enhancements planned
