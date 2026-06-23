@@ -87,32 +87,41 @@ Set optional token budgets on goals to limit resource usage. Telos tracks token 
 
 ## Installation
 
-### Local Development
+### Quick Start
 
-Clone and use directly:
+For immediate testing:
 
 ```bash
 cd /path/to/telos
 pi -e ./src/index.ts
 ```
 
-### Global Installation
+### Installation Options
 
-Copy to your global extensions directory:
-
+**Global Installation**:
 ```bash
-cp -r telos ~/.pi/agent/extensions/
-# Then simply run
+cp -r telos/src ~/.pi/agent/extensions/telos
 pi
 ```
 
-### Project-Local Installation
-
-Copy to your project's `.pi` directory:
-
+**Project-Local Installation**:
 ```bash
-cp -r telos .pi/extensions/
+mkdir -p .pi/extensions
+cp -r telos/src .pi/extensions/telos
+pi
 ```
+
+**GitHub Clone**:
+```bash
+git clone https://github.com/somebloke1/telos.git ~/.pi/agent/extensions/telos
+pi
+```
+
+### Important Notes
+- Commands work when typed directly (see [SLASH_COMMANDS.md](SLASH_COMMANDS.md))
+- `/goal` and `/goalchain` may not appear in slash command menu (Pi 0.78.0 limitation)
+- All commands are fully functional when typed
+- See [INSTALLATION.md](INSTALLATION.md) for detailed instructions
 
 ## Usage
 
@@ -398,6 +407,69 @@ Contributions welcome! Areas for improvement:
 - Goal analytics and reporting
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+## Documentation
+
+- **[INSTALLATION.md](INSTALLATION.md)** - Detailed installation instructions
+- **[SLASH_COMMANDS.md](SLASH_COMMANDS.md)** - Why commands may not appear in slash menu
+- **[TESTING.md](TESTING.md)** - Comprehensive testing procedures
+- **[EXAMPLES.md](EXAMPLES.md)** - Real-world usage examples
+- **[docs/design.md](docs/design.md)** - Architecture and design decisions
+- **[docs/goal-chain-technical-summary.md](docs/goal-chain-technical-summary.md)** - Goal chain technical details
+- **[ROADMAP.md](ROADMAP.md)** - Development roadmap
+- **[CHANGELOG.md](CHANGELOG.md)** - Version history
+
+## Quick Reference
+
+### Single Goals
+```
+/goal <objective>      Set a goal
+/goal                  View current goal
+/goal pause            Pause goal
+/goal resume           Resume goal  
+/goal clear            Clear goal
+```
+
+### Goal Chains
+```
+/goalchain create <primary_goal>    Create evolutionary chain
+/goalchain list                     List all chains
+/goalchain show <id>                Show chain details
+/goalchain infer <id>               Infer sub-goals
+/goalchain delete <id>              Delete chain
+```
+
+**Note**: Type commands directly - they work even if not in slash menu.
+
+## Troubleshooting
+
+### Commands Not Working
+
+If commands don't work:
+1. Verify extension is loaded: `pi -e /path/to/telos/src/index.ts`
+2. Type commands directly (no autocomplete in Pi 0.78.0)
+3. Check for error messages in console
+4. See [SLASH_COMMANDS.md](SLASH_COMMANDS.md) for details
+
+### Extension Not Loading
+
+1. Check file structure matches expected format
+2. Verify TypeScript syntax (some type errors expected)
+3. Restart Pi after installation
+4. See [INSTALLATION.md](INSTALLATION.md) for troubleshooting
+
+### Goals Not Persisting
+
+1. Ensure session is being saved (not ephemeral)
+2. Check session file permissions
+3. Verify goal entries are being written
+
+### Automatic Continuation Not Working
+
+1. Ensure goal status is 'active'
+2. Check agent is truly idle
+3. Verify continuation is enabled
+4. Wait minimum 2 seconds between turns
 
 ## License
 
