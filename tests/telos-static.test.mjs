@@ -77,3 +77,14 @@ test("Type-check workflow does not require an npm lockfile cache", async () => {
 	assert.match(workflow, /node-version: '24'/);
 	assert.doesNotMatch(workflow, /cache: 'npm'/);
 });
+
+test("Goal TUI status integration composes with Pi footer APIs", async () => {
+	const indexSource = await readSource("src/index.ts");
+	const footerSource = await readSource("src/tui/footer.ts");
+
+	assert.match(indexSource, /renderGoalFooter\(ctx, goalManager\)/);
+	assert.match(footerSource, /setStatus\?: \(key: string, value: string \| undefined\) => void/);
+	assert.match(footerSource, /const GOAL_STATUS_KEY = "telos-goal"/);
+	assert.match(footerSource, /setStatus\(GOAL_STATUS_KEY, undefined\)/);
+	assert.doesNotMatch(footerSource, /setFooter/);
+});
