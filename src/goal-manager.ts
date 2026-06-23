@@ -211,13 +211,27 @@ export class GoalManager {
 		this.goal = null;
 		this.nextGoalId = 1;
 
-		// Scan entries for goal state
-		for (const entry of sessionManager.getBranch()) {
-			if (entry.type === "custom" && entry.customType === "telos:goal") {
-				const goalData = entry.data as Goal;
-				this.goal = goalData;
-				this.nextGoalId = parseInt(goalData.id.split("-")[1]) + 1;
-				break;
+		// Scan session-level custom entries and use the latest goal entry. Prefer
+		// getEntries() for reload-safe extension persistence; fall back to getBranch()
+		// for older Pi runtimes.
+		const entries = typeof (sessionManager as any).getEntries === "function"
+			? (sessionManager as any).getEntries()
+			: sessionManager.getBranch();
+		for (const entry of entries) {
+			if (entry.type !== "custom" || entry.customType !== "telos:goal") {
+				continue;
+			}
+
+			const goalData = entry.data as Goal | null;
+			if (!goalData) {
+				this.goal = null;
+				continue;
+			}
+
+			this.goal = goalData;
+			const parsedId = Number.parseInt(goalData.id?.split("-")[1] || "", 10);
+			if (Number.isFinite(parsedId)) {
+				this.nextGoalId = Math.max(this.nextGoalId, parsedId + 1);
 			}
 		}
 	}
@@ -225,10 +239,13 @@ export class GoalManager {
 	/**
 	 * Persist goal state to session
 	 */
-	async persistToSession(pi: any): Promise<void> {
-		if (this.goal) {
-			pi.appendEntry("telos:goal", this.goal);
+	async persistToSession(pi: { appendEntry?: (customType: string, data?: unknown) => void } | undefined): Promise<boolean> {
+		if (typeof pi?.appendEntry !== "function") {
+			return false;
 		}
+
+		pi.appendEntry("telos:goal", this.goal);
+		return true;
 	}
 
 	/**

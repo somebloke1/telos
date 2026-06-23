@@ -7,7 +7,10 @@
 import type { GoalManager, Goal, GoalStatus } from "./goal-manager.js";
 
 export class GoalTools {
-	constructor(private goalManager: GoalManager) {}
+	constructor(
+		private goalManager: GoalManager,
+		private pi?: { appendEntry?: (customType: string, data?: unknown) => void },
+	) {}
 
 	/**
 	 * get_goal tool implementation
@@ -87,7 +90,7 @@ export class GoalTools {
 		const goal = this.goalManager.createGoal(objective, params.token_budget);
 
 		// Persist to session
-		await this.goalManager.persistToSession(ctx.pi);
+		await this.goalManager.persistToSession(ctx?.pi ?? this.pi);
 
 		const stats = this.goalManager.getStats();
 		const goalInfo = this.formatGoalInfo(goal, stats);
@@ -140,7 +143,7 @@ export class GoalTools {
 		this.goalManager.updateGoalStatus(params.status);
 
 		// Persist to session
-		await this.goalManager.persistToSession(ctx.pi);
+		await this.goalManager.persistToSession(ctx?.pi ?? this.pi);
 
 		// Build response message
 		let message = `Goal status updated: ${previousStatus.toUpperCase()} → ${params.status.toUpperCase()}`;

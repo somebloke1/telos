@@ -1,0 +1,52 @@
+name: Adaptive GitHub Maintenance
+
+on:
+  schedule:
+    # Base cadence: hourly. The script determines whether to perform maintenance.
+    - cron: "0 * * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: write
+  issues: read
+  pull-requests: read
+
+jobs:
+  maintain:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Run adaptive maintenance check
+        id: maintenance
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node .github/scripts/github-maintenance.mjs
+
+      - name: Skip commit when maintenance was skipped
+        if: steps.maintenance.outputs.maintenance_should_run != 'true'
+        run: |
+          echo "Adaptive check decided to skip maintenance this hour."
+
+      - name: Commit latest maintenance report
+        if: steps.maintenance.outputs.maintenance_should_run == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if [ -f .github/maintenance/latest-report.json ]; then
+            git add .github/maintenance/latest-report.json
+            if git diff --cached --quiet; then
+              echo "No maintenance report changes to commit"
+            else
+              git commit -m "chore: update automated github maintenance report"
+              git push
+            fi
+          fi
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -26,18 +26,25 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { GoalManager } from "./goal-manager.js";
 import { GoalTools } from "./goal-tools.js";
 import { GoalContinuation } from "./goal-continuation.js";
-import { GoalChainManager } from "./goal-chain.js";
+import { GoalChainManager, type GoalChain } from "./goal-chain.js";
 
 export default function (pi: ExtensionAPI) {
 	const goalManager = new GoalManager();
-	const goalTools = new GoalTools(goalManager);
+	const goalTools = new GoalTools(goalManager, pi);
 	const goalContinuation = new GoalContinuation(goalManager, pi);
 
 	// Initialize goal manager and goal chain manager on session start
 	const goalChainManager = new GoalChainManager();
+	let goalChainContinuationInProgress = false;
+	let lastGoalChainContinuationTime = 0;
+	let lastGoalHandoffNoticeTime = 0;
+	const MIN_GOAL_CHAIN_CONTINUATION_INTERVAL = 2000;
+	const GOAL_HANDOFF_NOTICE_INTERVAL = 30 * 60 * 1000;
+	const GOAL_HANDOFF_CONTEXT_THRESHOLD_PERCENT = 75;
 
 	pi.on("session_start", async (event, ctx) => {
 		await goalManager.loadFromSession(ctx.sessionManager);
+		goalChainManager.loadFromSession(ctx.sessionManager);
 
 		// Check if there's an active goal that should continue
 		if (event.reason !== "startup") {
@@ -147,7 +154,22 @@ export default function (pi: ExtensionAPI) {
 
 	// Set up continuation tracking
 	pi.on("turn_end", async (_event, ctx) => {
+		lastGoalHandoffNoticeTime = maybeNotifyGoalHandoff(goalManager, ctx, lastGoalHandoffNoticeTime, {
+			thresholdPercent: GOAL_HANDOFF_CONTEXT_THRESHOLD_PERCENT,
+			noticeIntervalMs: GOAL_HANDOFF_NOTICE_INTERVAL,
+		});
 		await goalContinuation.checkContinuation(ctx);
+		await checkGoalChainContinuation(goalChainManager, pi, ctx, {
+			isInProgress: () => goalChainContinuationInProgress,
+			setInProgress: (value: boolean) => {
+				goalChainContinuationInProgress = value;
+			},
+			getLastTime: () => lastGoalChainContinuationTime,
+			setLastTime: (value: number) => {
+				lastGoalChainContinuationTime = value;
+			},
+			minInterval: MIN_GOAL_CHAIN_CONTINUATION_INTERVAL,
+		});
 	});
 
 	// Track token usage for goals
@@ -161,6 +183,10 @@ export default function (pi: ExtensionAPI) {
 
 	// Monitor for tool completion to update goal state
 	pi.on("tool_execution_end", async (event, ctx) => {
+		if (event.toolName === "create_goal" && !event.isError) {
+			goalContinuation.enableContinuation();
+		}
+
 		if (event.toolName === "update_goal" && !event.isError) {
 			// Goal was just updated, check if we need to stop continuation
 			await goalContinuation.handleGoalUpdate(event, ctx);
@@ -241,7 +267,7 @@ export default function (pi: ExtensionAPI) {
 			primary_goal: Type.String({
 				description: "The primary objective that the entire goal chain serves",
 			}),
-			es_sential_principles: Type.Optional(
+			essential_principles: Type.Optional(
 				Type.Array(
 					Type.String({
 						description: "Core principles that guide the evolutionary process",
@@ -266,6 +292,7 @@ export default function (pi: ExtensionAPI) {
 				params.essential_principles,
 				params.initial_sub_goals,
 			);
+			await goalChainManager.persistToSession(pi);
 
 			const formatted = goalChainManager.formatGoalChain(chain);
 
@@ -307,6 +334,7 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const newSubGoals = goalChainManager.addSubGoals(params.chain_id, params.objectives);
+			await goalChainManager.persistToSession(pi);
 
 			return {
 				content: [
@@ -360,6 +388,7 @@ export default function (pi: ExtensionAPI) {
 				params.status,
 				params.learnings,
 			);
+			await goalChainManager.persistToSession(pi);
 
 			let message = `Sub-goal ${params.sub_goal_id} updated to ${params.status.toUpperCase()}`;
 			if (params.learnings && params.learnings.length > 0) {
@@ -405,6 +434,13 @@ export default function (pi: ExtensionAPI) {
 					}),
 				),
 			),
+			remove_principles: Type.Optional(
+				Type.Array(
+					Type.String({
+						description: "Existing principles to remove by exact normalized text match",
+					}),
+				),
+			),
 			mutation_reason: Type.String({
 				description: "Clear explanation of why this mutation is justified based on learnings",
 			}),
@@ -427,16 +463,20 @@ export default function (pi: ExtensionAPI) {
 				params.new_principles,
 				params.mutation_reason,
 				params.confidence || 0.7,
+				params.remove_principles,
 			);
+			await goalChainManager.persistToSession(pi);
 
 			const message = [
 				`Reproductive clause mutated to version ${mutation.newClause.version}`,
-				`",
-				`Reason: ${mutation.mutation_reason}`,
+				``,
+				`Reason: ${mutation.mutationReason}`,
 				`Confidence: ${Math.round(mutation.confidence * 100)}%`,
-				`",
+				``,
 				`Primary goal: ${mutation.newClause.primaryGoal}`,
-				`",
+				``,
+				params.remove_principles?.length ? `Removed principles:` : undefined,
+				...(params.remove_principles || []).map((p) => `  - ${p}`),
 				`New principles:`,
 				...mutation.newClause.essentialPrinciples.map((p) => `  - ${p}`),
 			].join("\n");
@@ -475,6 +515,9 @@ export default function (pi: ExtensionAPI) {
 			}
 
 			const inferredGoals = goalChainManager.inferSubGoals(params.chain_id);
+			if (inferredGoals.length > 0) {
+				await goalChainManager.persistToSession(pi);
+			}
 
 			if (inferredGoals.length === 0) {
 				return {
@@ -533,12 +576,37 @@ async function handleGoalCommand(
 	const remaining = parts.slice(1).join(" ");
 
 	switch (command) {
+		case "help":
+			ctx.ui.notify(
+				"Usage: /goal <objective> | status | show | list | handoff | pause | resume | clear",
+				"info",
+			);
+			break;
+
+		case "status":
+		case "show":
+		case "list":
+			if (!goal) {
+				ctx.ui.notify("No active goal. Usage: /goal <objective>", "info");
+				return;
+			}
+			showGoalStatus(goal, ctx);
+			break;
+
+		case "handoff":
+		case "new-agent":
+		case "new_session":
+		case "new-session":
+			await performGoalHandoff(goalManager, goalContinuation, ctx);
+			break;
+
 		case "clear":
 			if (!goal) {
 				ctx.ui.notify("No active goal to clear", "info");
 				return;
 			}
 			goalManager.clearGoal();
+			await goalManager.persistToSession(pi);
 			goalContinuation.disableContinuation();
 			ctx.ui.notify("Goal cleared", "info");
 			break;
@@ -553,6 +621,7 @@ async function handleGoalCommand(
 				return;
 			}
 			goalManager.updateGoalStatus("paused");
+			await goalManager.persistToSession(pi);
 			goalContinuation.disableContinuation();
 			ctx.ui.notify("Goal paused", "info");
 			break;
@@ -564,11 +633,14 @@ async function handleGoalCommand(
 			}
 			if (goal.status === "active") {
 				ctx.ui.notify("Goal is already active", "info");
+				await goalContinuation.triggerNow(ctx);
 				return;
 			}
 			goalManager.updateGoalStatus("active");
+			await goalManager.persistToSession(pi);
 			goalContinuation.enableContinuation();
-			ctx.ui.notify("Goal resumed", "info");
+			ctx.ui.notify("Goal resumed; starting agent continuation", "info");
+			await goalContinuation.triggerNow(ctx);
 			break;
 
 		default:
@@ -596,10 +668,210 @@ async function handleGoalCommand(
 
 			// Create the new goal
 			goalManager.createGoal(objective);
+			await goalManager.persistToSession(pi);
 			goalContinuation.enableContinuation();
-			ctx.ui.notify("Goal set successfully", "info");
+			ctx.ui.notify("Goal set successfully; starting agent continuation", "info");
+			await goalContinuation.triggerNow(ctx);
 			break;
 	}
+}
+
+function maybeNotifyGoalHandoff(
+	goalManager: GoalManager,
+	ctx: any,
+	lastNoticeTime: number,
+	options: { thresholdPercent: number; noticeIntervalMs: number },
+): number {
+	const goal = goalManager.getGoal();
+	if (!goal || goal.status !== "active" || !ctx?.hasUI) {
+		return lastNoticeTime;
+	}
+
+	const usage = ctx.getContextUsage?.();
+	if (!usage || usage.percent === null || usage.percent === undefined) {
+		return lastNoticeTime;
+	}
+
+	const percent = usage.percent <= 1 ? usage.percent * 100 : usage.percent;
+	const now = Date.now();
+	if (percent < options.thresholdPercent || now - lastNoticeTime < options.noticeIntervalMs) {
+		return lastNoticeTime;
+	}
+
+	ctx.ui.notify(
+		`Goal context is ${Math.round(percent)}% full. Use /goal handoff to start a fresh session with a compact continuity brief.`,
+		"info",
+	);
+	return now;
+}
+
+async function performGoalHandoff(
+	goalManager: GoalManager,
+	goalContinuation: GoalContinuation,
+	ctx: any,
+): Promise<void> {
+	const goal = goalManager.getGoal();
+	if (!goal) {
+		ctx.ui.notify("No active goal to hand off", "info");
+		return;
+	}
+	if (goal.status !== "active") {
+		ctx.ui.notify(`Goal is ${goal.status}; handoff only starts active goals`, "info");
+		return;
+	}
+	if (typeof ctx.newSession !== "function") {
+		ctx.ui.notify("Goal handoff is only available from interactive command context", "error");
+		return;
+	}
+
+	await ctx.waitForIdle?.();
+	const parentSession = ctx.sessionManager?.getSessionFile?.();
+	const usage = ctx.getContextUsage?.();
+	const brief = buildGoalHandoffBrief(goal, goalManager.getStats(), usage, parentSession);
+	const goalSnapshot = { ...goal, updatedAt: Date.now() };
+
+	const result = await ctx.newSession({
+		parentSession,
+		setup: async (sessionManager: any) => {
+			sessionManager.appendCustomEntry?.("telos:goal", goalSnapshot);
+			sessionManager.appendMessage?.({
+				role: "user",
+				content: [{ type: "text", text: brief }],
+				timestamp: Date.now(),
+			});
+		},
+		withSession: async (newCtx: any) => {
+			await newCtx.sendUserMessage(
+				"Continue the active Telos goal from the compact handoff brief. Start by calling get_goal, then proceed with the next smallest verifiable step.",
+			);
+		},
+	});
+
+	if (result?.cancelled) {
+		ctx.ui.notify("Goal handoff cancelled", "info");
+		return;
+	}
+
+	goalContinuation.disableContinuation();
+}
+
+function getContextUsageSummary(usage: any): { percent: string; tokens: string | number } {
+	return {
+		percent: usage?.percent === null || usage?.percent === undefined
+			? "unknown"
+			: `${Math.round(usage.percent <= 1 ? usage.percent * 100 : usage.percent)}%`,
+		tokens: usage?.tokens ?? "unknown",
+	};
+}
+
+function buildGoalHandoffBrief(goal: any, stats: any, usage: any, parentSession?: string): string {
+	const { percent, tokens } = getContextUsageSummary(usage);
+	const budget = goal.tokenBudget ? `${stats?.tokensUsed || 0}/${goal.tokenBudget}` : "none";
+
+	return [
+		"TELOS GOAL HANDOFF BRIEF",
+		"",
+		`Goal ID: ${goal.id}`,
+		`Status: ${goal.status}`,
+		`Objective: ${goal.objective}`,
+		`Parent session: ${parentSession || "unknown"}`,
+		`Context usage at handoff: ${tokens} tokens (${percent})`,
+		`Goal token budget: ${budget}`,
+		"",
+		"Continuity instructions:",
+		"- Preserve the objective, but do not replay the entire prior session.",
+		"- Use repository state and concise evidence rather than long conversation history.",
+		"- Continue with the next smallest verifiable step.",
+		"- Call update_goal only when complete or blocked.",
+	].join("\n");
+}
+
+async function performGoalChainHandoff(
+	goalChainManager: GoalChainManager,
+	chainId: string,
+	ctx: any,
+): Promise<void> {
+	const chain = goalChainManager.getGoalChain(chainId);
+	if (!chain) {
+		ctx.ui.notify(`Goal chain ${chainId} not found`, "error");
+		return;
+	}
+	if (chain.status !== "active") {
+		ctx.ui.notify(`Goal chain ${chainId} is ${chain.status}; handoff only starts active chains`, "info");
+		return;
+	}
+	if (typeof ctx.newSession !== "function") {
+		ctx.ui.notify("Goal chain handoff is only available from interactive command context", "error");
+		return;
+	}
+
+	await ctx.waitForIdle?.();
+	const parentSession = ctx.sessionManager?.getSessionFile?.();
+	const usage = ctx.getContextUsage?.();
+	const stats = goalChainManager.getChainStatistics(chain);
+	const brief = buildGoalChainHandoffBrief(chain, stats, usage, parentSession);
+	const snapshot = goalChainManager.getPersistenceSnapshot();
+
+	const result = await ctx.newSession({
+		parentSession,
+		setup: async (sessionManager: any) => {
+			sessionManager.appendCustomEntry?.("telos:goal-chains", snapshot);
+			sessionManager.appendMessage?.({
+				role: "user",
+				content: [{ type: "text", text: brief }],
+				timestamp: Date.now(),
+			});
+		},
+		withSession: async (newCtx: any) => {
+			await newCtx.sendUserMessage(
+				`Continue the active Telos goal chain ${chain.id} from the compact handoff brief. Start by calling get_goal_chain with chain_id "${chain.id}", then proceed with the next smallest verifiable sub-goal.`,
+			);
+		},
+	});
+
+	if (result?.cancelled) {
+		ctx.ui.notify("Goal chain handoff cancelled", "info");
+	}
+}
+
+function buildGoalChainHandoffBrief(chain: GoalChain, stats: any, usage: any, parentSession?: string): string {
+	const { percent, tokens } = getContextUsageSummary(usage);
+	const actionableSubGoals = chain.subGoals.filter((subGoal) =>
+		["pending", "active"].includes(subGoal.status),
+	);
+	const recentRecords = chain.recordSpace.slice(-8);
+
+	return [
+		"TELOS GOAL CHAIN HANDOFF BRIEF",
+		"",
+		`Goal Chain ID: ${chain.id}`,
+		`Status: ${chain.status}`,
+		`Primary goal: ${chain.primaryGoal}`,
+		`Generation: ${chain.currentGeneration} / ${chain.totalGenerations}`,
+		`Reproductive clause version: ${chain.reproductiveClause.version}`,
+		`Parent session: ${parentSession || "unknown"}`,
+		`Context usage at handoff: ${tokens} tokens (${percent})`,
+		`Sub-goal progress: ${stats.completedSubGoals}/${stats.totalSubGoals} complete, ${stats.blockedSubGoals} blocked`,
+		"",
+		"Essential principles:",
+		...chain.reproductiveClause.essentialPrinciples.map((principle) => `- ${principle}`),
+		"",
+		"Queued sub-goals:",
+		...(actionableSubGoals.length > 0
+			? actionableSubGoals.map((subGoal) => `- [${subGoal.status.toUpperCase()}] ${subGoal.id}: ${subGoal.objective}`)
+			: ["- None currently queued; inspect the chain and add or infer a next sub-goal if needed."]),
+		"",
+		"Recent record space:",
+		...(recentRecords.length > 0
+			? recentRecords.map((record) => `- ${record.type} (${record.goalId}): ${record.details}`)
+			: ["- No record entries yet."]),
+		"",
+		"Continuity instructions:",
+		"- Preserve the reproductive clause and current chain state.",
+		"- Do not replay the old conversation; use this brief plus repository state.",
+		"- Continue with the next smallest verifiable sub-goal.",
+		"- Record learnings when completing or blocking sub-goals.",
+	].join("\n");
 }
 
 /**
@@ -611,56 +883,157 @@ async function handleGoalChainCommand(
 	pi: ExtensionAPI,
 	ctx: any,
 ): Promise<void> {
-	const trimmed = args.trim();
+	try {
+		const trimmed = (typeof args === "string" ? args : "").trim();
 
-	if (!trimmed) {
-		// Show chains or usage
-		const chains = goalChainManager.getAllGoalChains();
-		if (chains.length === 0) {
-			ctx.ui.notify(
-				"No goal chains. Usage: /goalchain create <primary_goal> | list | show <id> | mutate <id> | delete <id>",
-				"info",
-			);
+		// Refresh from latest session state in case the command is run after a warm restart
+		if (ctx?.sessionManager) {
+			goalChainManager.loadFromSession(ctx.sessionManager);
+		}
+
+		if (!trimmed) {
+			// Show chains or usage
+			const chains = goalChainManager.getAllGoalChains();
+			if (chains.length === 0) {
+				ctx.ui.notify(
+					"No goal chains. Usage: /goalchain create <primary_goal> | continue [id] | handoff [id] | list | show <id> [--json] | add_sub_goal <id> <objective> | mutate <id> | delete <id> | infer <id> | diagnose",
+					"info",
+				);
+				return;
+			}
+
+			// Show all chains
+			const chainSummary = chains
+				.map(
+					(c) =>
+						`[${c.status.toUpperCase()}] ${c.id}: ${(c.primaryGoal || "<no primary goal>").slice(0, 60)}... (gen ${c.currentGeneration}, ${c.subGoals.length} sub-goals)`,
+				)
+				.join("\n");
+			ctx.ui.notify(`Goal Chains:\n${chainSummary}`, "info");
 			return;
 		}
 
-		// Show all chains
-		const chainSummary = chains
-			.map(
-				(c) =>
-					`[${c.status.toUpperCase()}] ${c.id}: ${c.primaryGoal.slice(0, 60)}... (gen ${c.currentGeneration}, ${c.subGoals.length} sub-goals)`,
-			)
-			.join("\n");
-		ctx.ui.notify(`Goal Chains:\n${chainSummary}`, "info");
-		return;
-	}
+		const parts = trimmed.split(/\s+/);
+		const command = parts[0].toLowerCase();
+		const remaining = parts.slice(1).join(" ");
 
-	const parts = trimmed.split(/\s+/);
-	const command = parts[0].toLowerCase();
-	const remaining = parts.slice(1).join(" ");
+		const allChains = goalChainManager.getAllGoalChains();
+		const resolveChainId = (input: string, allowLatestFallback = false): string | null => {
+			if (input) {
+				return input;
+			}
+			if (!allowLatestFallback || allChains.length !== 1) {
+				return null;
+			}
+			return allChains[allChains.length - 1].id;
+		};
 
-	switch (command) {
+		switch (command) {
 		case "create": {
 			if (!remaining) {
 				ctx.ui.notify("Usage: /goalchain create <primary_goal>", "error");
 				return;
 			}
 			const chain = goalChainManager.createGoalChain(remaining);
+			await goalChainManager.persistToSession(pi);
 			const formatted = goalChainManager.formatGoalChain(chain);
-			ctx.ui.notify(`Goal chain created:\n${formatted}`, "info");
+			ctx.ui.notify(`Goal chain created; starting agent continuation:\n${formatted}`, "info");
+			await checkGoalChainContinuation(goalChainManager, pi, ctx, createOneShotGoalChainContinuationState(), {
+				allowWithoutActionableSubGoals: true,
+				preferredChainId: chain.id,
+			});
+			break;
+		}
+
+		case "add_sub_goal":
+		case "add_sub_goals": {
+			if (!remaining) {
+				ctx.ui.notify("Usage: /goalchain add_sub_goal <chain_id> <objective> (or omit chain_id if only one chain exists)", "error");
+				return;
+			}
+			const tokens = remaining.split(/\s+/);
+			let chainId: string | null = null;
+			let objective = remaining;
+
+			if (tokens[0].startsWith("chain-")) {
+				chainId = tokens[0];
+				objective = tokens.slice(1).join(" ");
+			} else {
+				chainId = resolveChainId("", true);
+			}
+
+			if (!chainId) {
+				ctx.ui.notify(
+					"Usage: /goalchain add_sub_goal <chain_id> <objective> (or create only one chain to use implicit chain)",
+					"error",
+				);
+				return;
+			}
+
+			if (!objective.trim()) {
+				ctx.ui.notify("Usage: /goalchain add_sub_goal <chain_id> <objective>", "error");
+				return;
+			}
+
+			const newSubGoals = goalChainManager.addSubGoals(chainId, [objective]);
+			await goalChainManager.persistToSession(pi);
+			ctx.ui.notify(
+				`Added ${newSubGoals.length} sub-goal(s) to chain ${chainId}; starting agent continuation:\n${newSubGoals.map((sg) => `  - [${sg.status.toUpperCase()}] ${sg.objective}`).join("\n")}`,
+				"info",
+			);
+			await checkGoalChainContinuation(goalChainManager, pi, ctx, createOneShotGoalChainContinuationState(), {
+				preferredChainId: chainId,
+			});
+			break;
+		}
+
+		case "continue":
+		case "start":
+		case "resume": {
+			const chainId = resolveChainId(remaining, true);
+			if (chainId) {
+				const chain = goalChainManager.getGoalChain(chainId);
+				if (!chain) {
+					ctx.ui.notify(`Goal chain ${chainId} not found`, "error");
+					return;
+				}
+				chain.status = "active";
+				await goalChainManager.persistToSession(pi);
+			}
+			ctx.ui.notify("Starting goalchain agent continuation", "info");
+			await checkGoalChainContinuation(goalChainManager, pi, ctx, createOneShotGoalChainContinuationState(), {
+				allowWithoutActionableSubGoals: true,
+				preferredChainId: chainId || undefined,
+			});
+			break;
+		}
+
+		case "handoff":
+		case "new-agent":
+		case "new_session":
+		case "new-session": {
+			const chainId = resolveChainId(remaining, true);
+			if (!chainId) {
+				ctx.ui.notify(
+					"Usage: /goalchain handoff <chain_id> (or omit chain_id if only one chain exists)",
+					"error",
+				);
+				return;
+			}
+			await performGoalChainHandoff(goalChainManager, chainId, ctx);
 			break;
 		}
 
 		case "list": {
 			const chains = goalChainManager.getAllGoalChains();
 			if (chains.length === 0) {
-				ctx.ui.notify("No goal chains", "info");
+				ctx.ui.notify("No goal chains in session persistence.", "info");
 				return;
 			}
 			const chainSummary = chains
 				.map(
 					(c) =>
-						`[${c.status.toUpperCase()}] ${c.id}: ${c.primaryGoal.slice(0, 60)}... (gen ${c.currentGeneration}, ${c.subGoals.length} sub-goals)`,
+						`[${c.status.toUpperCase()}] ${c.id}: ${(c.primaryGoal || "<no primary goal>").slice(0, 60)}... (gen ${c.currentGeneration}, ${c.subGoals.length} sub-goals)`,
 				)
 				.join("\n");
 			ctx.ui.notify(`Goal Chains:\n${chainSummary}`, "info");
@@ -669,22 +1042,43 @@ async function handleGoalChainCommand(
 
 		case "show":
 		case "view": {
-			const chainId = remaining || parts[1];
+			const tokens = remaining.split(/\s+/).filter((t) => t.length > 0);
+			const wantsJson = tokens.includes("--json") || tokens.includes("-j");
+			let chainIdInput =
+				tokens.find((value) => !value.startsWith("-") && value.length > 0) || "";
+			if (chainIdInput && !/^chain-\d+$/.test(chainIdInput)) {
+				const fallback = tokens.find((value) => /^chain-\d+$/.test(value));
+				if (fallback) {
+					chainIdInput = fallback;
+				}
+			}
+			const chainId = resolveChainId(chainIdInput, true);
 			if (!chainId) {
-				ctx.ui.notify("Usage: /goalchain show <chain_id>", "error");
+				ctx.ui.notify(
+					"Usage: /goalchain show <chain_id> [--json] (or use with no id when only one chain exists)",
+					"error",
+				);
 				return;
 			}
 			const chain = goalChainManager.getGoalChain(chainId);
 			if (!chain) {
-				ctx.ui.notify(`Goal chain ${chainId} not found`, "error");
+				const known = allChains.map((c) => c.id).join(", ") || "(none)";
+				ctx.ui.notify(`Goal chain ${chainId} not found. Known chains: ${known}`, "error");
 				return;
 			}
-			const formatted = goalChainManager.formatGoalChain(chain);
-			const stats = goalChainManager.getChainStatistics(chain);
-			ctx.ui.notify(
-				`${formatted}\n\nSTATISTICS:\n${JSON.stringify(stats, null, 2)}`,
-				"info",
-			);
+			if (wantsJson) {
+				ctx.ui.notify(
+					JSON.stringify({ chain, stats: goalChainManager.getChainStatistics(chain) }, null, 2),
+					"info",
+				);
+			} else {
+				const formatted = goalChainManager.formatGoalChain(chain);
+				const stats = goalChainManager.getChainStatistics(chain);
+				ctx.ui.notify(
+					`${formatted}\n\nSTATISTICS:\n${JSON.stringify(stats, null, 2)}`,
+					"info",
+				);
+			}
 			break;
 		}
 
@@ -704,6 +1098,7 @@ async function handleGoalChainCommand(
 			}
 			const deleted = goalChainManager.deleteGoalChain(chainId);
 			if (deleted) {
+				await goalChainManager.persistToSession(pi);
 				ctx.ui.notify(`Goal chain ${chainId} deleted`, "info");
 			} else {
 				ctx.ui.notify(`Goal chain ${chainId} not found`, "error");
@@ -733,6 +1128,7 @@ async function handleGoalChainCommand(
 			if (inferredGoals.length === 0) {
 				ctx.ui.notify("No new sub-goals could be inferred", "info");
 			} else {
+				await goalChainManager.persistToSession(pi);
 				ctx.ui.notify(
 					`Inferred ${inferredGoals.length} sub-goals:\n${inferredGoals.map((sg) => `  - [${sg.status.toUpperCase()}] ${sg.objective}`).join("\n")}`,
 					"info",
@@ -741,12 +1137,149 @@ async function handleGoalChainCommand(
 			break;
 		}
 
-		default:
+		case "diagnose":
+		case "debug": {
+			const sessionEntries = ctx?.sessionManager
+				? typeof ctx.sessionManager.getEntries === "function"
+					? ctx.sessionManager.getEntries()
+					: ctx.sessionManager.getBranch()
+				: [];
+			const chainEntries = sessionEntries.filter(
+				(entry: { type?: string; customType?: string }) =>
+					entry.type === "custom" && entry.customType === "telos:goal-chains",
+			);
+			const latestEntry = chainEntries[chainEntries.length - 1] as
+				| { data?: { schemaVersion?: number; chains?: Array<{ id?: string; primaryGoal?: string }> } }
+				| undefined;
+			const persistedChains = latestEntry?.data?.chains || [];
+			const chains = goalChainManager.getAllGoalChains();
 			ctx.ui.notify(
-				"Usage: /goalchain create <primary_goal> | list | show <id> | mutate <id> | delete <id> | infer <id>",
+				[
+					"GoalChain diagnostics:",
+					`- In-memory chains: ${chains.length} (${chains.map((c) => c.id).join(", ") || "none"})`,
+					`- Session entries: ${chainEntries.length}`,
+					`- Latest schema: ${latestEntry?.data?.schemaVersion ?? "none"}`,
+					`- Persisted chains: ${persistedChains.length} (${persistedChains.map((c) => c.id || "<missing id>").join(", ") || "none"})`,
+					`- Persisted goals: ${persistedChains.map((c) => `${c.id || "<missing id>"}: ${c.primaryGoal || "<no primary goal>"}`).join(" | ") || "none"}`,
+				].join("\n"),
 				"info",
 			);
 			break;
+		}
+
+		default:
+			ctx.ui.notify(
+				"Usage: /goalchain create <primary_goal> | continue [id] | handoff [id] | list | show <id> [--json] | add_sub_goal <id> <objective> | mutate <id> | delete <id> | infer <id> | diagnose",
+				"info",
+			);
+			break;
+		}
+	} catch (error) {
+		const message = error instanceof Error ? error.message : String(error);
+		ctx.ui.notify(`Goalchain command failed: ${message}`, "error");
+	}
+}
+
+function createOneShotGoalChainContinuationState(): {
+	isInProgress: () => boolean;
+	setInProgress: (value: boolean) => void;
+	getLastTime: () => number;
+	setLastTime: (value: number) => void;
+	minInterval: number;
+} {
+	let inProgress = false;
+	let lastTime = 0;
+	return {
+		isInProgress: () => inProgress,
+		setInProgress: (value: boolean) => {
+			inProgress = value;
+		},
+		getLastTime: () => lastTime,
+		setLastTime: (value: number) => {
+			lastTime = value;
+		},
+		minInterval: 0,
+	};
+}
+
+async function checkGoalChainContinuation(
+	goalChainManager: GoalChainManager,
+	pi: ExtensionAPI,
+	ctx: any,
+	state: {
+		isInProgress: () => boolean;
+		setInProgress: (value: boolean) => void;
+		getLastTime: () => number;
+		setLastTime: (value: number) => void;
+		minInterval: number;
+	},
+	options: { allowWithoutActionableSubGoals?: boolean; preferredChainId?: string } = {},
+): Promise<void> {
+	if (state.isInProgress()) {
+		return;
+	}
+
+	const now = Date.now();
+	if (now - state.getLastTime() < state.minInterval) {
+		return;
+	}
+
+	if (ctx?.isIdle && !ctx.isIdle()) {
+		return;
+	}
+
+	const activeChains = goalChainManager.getAllGoalChains().filter((chain) => chain.status === "active");
+	if (activeChains.length === 0) {
+		return;
+	}
+
+	const chain =
+		(options.preferredChainId && activeChains.find((activeChain) => activeChain.id === options.preferredChainId)) ||
+		activeChains[activeChains.length - 1];
+	const actionableSubGoals = chain.subGoals.filter((subGoal) =>
+		["pending", "active"].includes(subGoal.status),
+	);
+	if (actionableSubGoals.length === 0 && !options.allowWithoutActionableSubGoals) {
+		// No work is queued. Avoid repeatedly waking the agent just to say there is
+		// nothing to do; explicit /goalchain continue can still kick the agent.
+		return;
+	}
+
+	state.setInProgress(true);
+	state.setLastTime(now);
+	try {
+		const nextSubGoal =
+			actionableSubGoals.find((subGoal) => subGoal.status === "active") || actionableSubGoals[0];
+		const message = [
+			"CONTINUATION: You are continuing work on the active goal chain.",
+			"",
+			`Goal Chain: ${chain.id}`,
+			`Primary Goal: ${chain.primaryGoal}`,
+			`Generation: ${chain.currentGeneration} / ${chain.totalGenerations}`,
+			"",
+			"Instructions:",
+			"- Continue working toward the primary goal and reproductive clause.",
+			"- Use get_goal_chain to inspect current state before making decisions.",
+			"- If there are pending sub-goals, activate and work the next useful one.",
+			"- Record learnings when completing or blocking sub-goals.",
+			"- Do not mark work complete unless the goal chain objective is truly satisfied.",
+		];
+
+		if (nextSubGoal) {
+			message.push("", `Next sub-goal candidate: [${nextSubGoal.status.toUpperCase()}] ${nextSubGoal.id} - ${nextSubGoal.objective}`);
+		} else {
+			message.push(
+				"",
+				"No pending or active sub-goals are currently queued.",
+				"Action: inspect the chain, then add or infer the next sub-goal if the primary goal still requires work; otherwise report that the chain has no queued work.",
+			);
+		}
+
+		pi.sendUserMessage(message.join("\n"));
+	} catch (error) {
+		console.error("Failed to trigger goal chain continuation:", error);
+	} finally {
+		state.setInProgress(false);
 	}
 }
 

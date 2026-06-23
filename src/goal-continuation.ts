@@ -41,6 +41,20 @@ export class GoalContinuation {
 	}
 
 	/**
+	 * Immediately request a continuation turn for the current active goal.
+	 * Used by /goal create and /goal resume so setting a goal springs the agent into action.
+	 */
+	async triggerNow(ctx: any): Promise<void> {
+		const goal = this.goalManager.getGoal();
+		if (!goal || goal.status !== "active") {
+			return;
+		}
+
+		this.continuationEnabled = true;
+		await this.triggerContinuation(goal, ctx);
+	}
+
+	/**
 	 * Check if we should trigger continuation after a turn ends
 	 */
 	async checkContinuation(ctx: any): Promise<void> {
@@ -92,17 +106,7 @@ export class GoalContinuation {
 		try {
 			// Inject continuation steering message
 			const steeringMessage = this.buildContinuationMessage(goal);
-			this.pi.sendMessage(
-				{
-					customType: "telos:continuation",
-					content: steeringMessage,
-					display: false, // Don't show in TUI
-				},
-				{
-					deliverAs: "steer",
-					triggerTurn: true,
-				},
-			);
+			this.pi.sendUserMessage(steeringMessage);
 		} catch (error) {
 			// Log error but don't throw
 			console.error("Failed to trigger continuation:", error);
@@ -176,17 +180,7 @@ export class GoalContinuation {
 			"The user may choose to resume with an increased budget or clear the goal.",
 		].join("\n");
 
-		this.pi.sendMessage(
-			{
-				customType: "telos:budget-limit",
-				content: steeringMessage,
-				display: false,
-			},
-			{
-				deliverAs: "steer",
-				triggerTurn: false,
-			},
-		);
+		this.pi.sendUserMessage(steeringMessage);
 	}
 
 	/**
@@ -207,16 +201,6 @@ export class GoalContinuation {
 			"- Replan if necessary to align with the new objective.",
 		].join("\n");
 
-		this.pi.sendMessage(
-			{
-				customType: "telos:objective-updated",
-				content: steeringMessage,
-				display: false,
-			},
-			{
-				deliverAs: "steer",
-				triggerTurn: false,
-			},
-		);
+		this.pi.sendUserMessage(steeringMessage);
 	}
 }

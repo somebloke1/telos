@@ -36,6 +36,8 @@ Telos adds persistent goal tracking to your Pi sessions. Goals help you stay foc
 #### User Commands
 
 - `/goalchain create <primary_goal>` - Create a new evolutionary goal chain
+- `/goalchain continue [id]` - Resume/trigger agent continuation for a chain
+- `/goalchain handoff [id]` - Start a fresh session with a compact chain continuity brief
 - `/goalchain list` - List all goal chains
 - `/goalchain show <id>` - View detailed information about a goal chain
 - `/goalchain infer <id>` - Infer sub-goals from record space
@@ -49,6 +51,8 @@ Telos adds persistent goal tracking to your Pi sessions. Goals help you stay foc
 - `update_sub_goal_status` - Update sub-goal status with learnings
 - `mutate_reproductive_clause` - Evolve the primary goal and principles based on learnings
 - `infer_sub_goals` - Infer new sub-goals from record space patterns
+
+Goal chains are now persisted in session data, so `/goalchain list`, `show`, and evolving reproductive clauses survive prompts and session reloads. Reproductive clauses are restored deterministically and still mutate conservatively as learning accumulates.
 
 #### Key Concepts
 
@@ -84,6 +88,22 @@ When a goal is active, Telos automatically triggers continuation turns when the 
 ### Token Budget Tracking
 
 Set optional token budgets on goals to limit resource usage. Telos tracks token consumption and warns when approaching or exceeding the budget.
+
+### Adaptive GitHub Maintenance Automation
+
+This repository now includes an adaptive, continuous GitHub maintenance workflow:
+
+- `.github/workflows/github-maintenance.yml` runs every hour.
+- The maintenance interval is computed dynamically from recent activity.
+- If there are no changes for a sustained period, maintenance backs off to approximately twice per week.
+- During active periods, it ramps up toward hourly maintenance.
+- Interval transitions are smoothed using short/long activity windows to avoid abrupt changes.
+
+Maintenance checks currently include repository activity checks and a health report written to:
+
+- `.github/maintenance/latest-report.json`
+
+See [`docs/github-maintenance.md`](docs/github-maintenance.md) for details and tuning guidance. For issue and PR workflows, see [`docs/github-development.md`](docs/github-development.md).
 
 ## Installation
 
@@ -433,6 +453,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 ### Goal Chains
 ```
 /goalchain create <primary_goal>    Create evolutionary chain
+/goalchain continue [id]            Trigger chain continuation
+/goalchain handoff [id]             Move active chain to a fresh session
 /goalchain list                     List all chains
 /goalchain show <id>                Show chain details
 /goalchain infer <id>               Infer sub-goals
