@@ -26,6 +26,7 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import { GoalManager } from "./goal-manager.js";
 import { GoalTools } from "./goal-tools.js";
 import { GoalContinuation } from "./goal-continuation.js";
+import { renderGoalFooter } from "./tui/footer.js";
 import { GoalChainManager, type GoalChain } from "./goal-chain.js";
 
 export default function (pi: ExtensionAPI) {
@@ -185,11 +186,13 @@ export default function (pi: ExtensionAPI) {
 	pi.on("tool_execution_end", async (event, ctx) => {
 		if (event.toolName === "create_goal" && !event.isError) {
 			goalContinuation.enableContinuation();
+			renderGoalFooter(ctx, goalManager);
 		}
 
 		if (event.toolName === "update_goal" && !event.isError) {
 			// Goal was just updated, check if we need to stop continuation
 			await goalContinuation.handleGoalUpdate(event, ctx);
+			renderGoalFooter(ctx, goalManager);
 		}
 	});
 
