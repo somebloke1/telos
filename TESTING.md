@@ -2,6 +2,17 @@
 
 This document provides step-by-step instructions for testing the Telos extension.
 
+## Automated Smoke Tests
+
+Run the dependency-free Node test suite:
+
+```bash
+npm test
+npm run check
+```
+
+Expected: static smoke tests pass for goal-chain persistence snapshots, reload-safe state restoration, and handoff brief wiring.
+
 ## Quick Start Test
 
 ### 1. Load the Extension
@@ -162,6 +173,44 @@ Update the goal status to "paused"
 
 Expected: Error - LLM can only set "complete" or "blocked".
 
+## Goal Chain Testing
+
+### Basic Chain Operations
+
+Create and inspect a chain:
+```
+/goalchain create Improve project test coverage
+/goalchain show
+```
+
+Expected: a chain is created, persisted, and agent continuation starts.
+
+Add and continue a sub-goal:
+```
+/goalchain add_sub_goal Add smoke tests for goalchain persistence
+/goalchain continue
+```
+
+Expected: the new sub-goal appears and continuation starts for the only chain.
+
+### Goal Chain Handoff
+
+Create or resume an active chain, then:
+```
+/goalchain handoff
+```
+
+Expected: Pi opens a fresh session seeded with `telos:goal-chains` state and a compact "TELOS GOAL CHAIN HANDOFF BRIEF" user message, then asks the agent to call `get_goal_chain` and continue the next smallest sub-goal.
+
+Reload validation:
+```
+/reload
+/goalchain diagnose
+/goalchain handoff
+```
+
+Expected: diagnostics show persisted chains after reload, and handoff still finds the active chain.
+
 ## Session Persistence Testing
 
 ### 1. Create a Goal
@@ -293,6 +342,9 @@ Use this checklist to verify all functionality:
 - [ ] Token budget is tracked
 - [ ] Budget limit stops continuation
 - [ ] Goal persists across session reload
+- [ ] Goal chain persists across session reload
+- [ ] `npm test` passes
+- [ ] `/goalchain handoff` transfers chain state to a fresh session
 - [ ] Empty objectives are rejected
 - [ ] Long objectives are rejected
 - [ ] Invalid status transitions are rejected

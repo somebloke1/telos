@@ -45,7 +45,7 @@ export interface GoalChain {
 }
 
 export interface RecordSpaceEntry {
-	type: "goal_created" | "goal_completed" | "goal_blocked" | "goal_mutated" | "inference";
+	type: "goal_created" | "goal_updated" | "goal_completed" | "goal_blocked" | "goal_mutated" | "inference";
 	goalId: string;
 	timestamp: number;
 	details: string;
@@ -61,14 +61,96 @@ export interface GoalChainMutation {
 	timestamp: number;
 }
 
+export interface GoalChainPersistenceEntry {
+	schemaVersion: number;
+	chainIdCounter: number;
+	subGoalIdCounter: number;
+	chains: GoalChain[];
+}
+
 /**
  * GoalChainManager manages evolutionary goal chains
  */
 export class GoalChainManager {
+	private static readonly SCHEMA_VERSION = 1;
+	private static readonly COMPLETED_SUB_GOAL_FULL_DISPLAY_LIMIT = 3;
+	private static readonly COMPLETED_SUB_GOAL_RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 	private chains: Map<string, GoalChain> = new Map();
 	private reproductiveClauseCache: Map<string, { clause: ReproductiveClause; timestamp: number }> = new Map();
 	private chainIdCounter = 1;
 	private subGoalIdCounter = 1;
+
+	/**
+	 * Load goal chain state from session data.
+	 */
+	loadFromSession(sessionManager: { getEntries?: () => Array<{ type?: string; customType?: string; data?: unknown }>; getBranch?: () => Array<{ type?: string; customType?: string; data?: unknown }> }): void {
+		this.chains = new Map();
+		this.reproductiveClauseCache = new Map();
+		this.chainIdCounter = 1;
+		this.subGoalIdCounter = 1;
+
+		// Custom extension state is session-level persistence and may not always be
+		// present in the active branch immediately after /reload. Prefer getEntries(),
+		// as recommended by Pi's extension persistence docs, and keep getBranch() as a
+		// compatibility fallback for older runtimes.
+		const entries = typeof sessionManager.getEntries === "function"
+			? sessionManager.getEntries()
+			: typeof sessionManager.getBranch === "function"
+				? sessionManager.getBranch()
+				: [];
+		let latestEntry: GoalChainPersistenceEntry | null = null;
+
+		for (const entry of entries) {
+			if (entry.type === "custom" && entry.customType === "telos:goal-chains") {
+				const candidate = entry.data as GoalChainPersistenceEntry;
+				if (candidate?.chains && Array.isArray(candidate.chains)) {
+					latestEntry = candidate;
+				}
+			}
+		}
+
+		if (!latestEntry) {
+			return;
+		}
+
+		this.chainIdCounter = Number(latestEntry.chainIdCounter) > 0 ? Number(latestEntry.chainIdCounter) : 1;
+		this.subGoalIdCounter = Number(latestEntry.subGoalIdCounter) > 0 ? Number(latestEntry.subGoalIdCounter) : 1;
+
+		for (const chain of latestEntry.chains) {
+			if (!chain || !chain.id || !chain.primaryGoal) {
+				continue;
+			}
+			this.chains.set(chain.id, chain);
+			this.reproductiveClauseCache.set(chain.id, {
+				clause: chain.reproductiveClause,
+				timestamp: chain.reproductiveClause.lifelineTimestamp,
+			});
+		}
+	}
+
+	/**
+	 * Create a serializable snapshot suitable for session persistence or handoff.
+	 */
+	getPersistenceSnapshot(): GoalChainPersistenceEntry {
+		return {
+			schemaVersion: GoalChainManager.SCHEMA_VERSION,
+			chainIdCounter: this.chainIdCounter,
+			subGoalIdCounter: this.subGoalIdCounter,
+			chains: this.getAllGoalChains(),
+		};
+	}
+
+	/**
+	 * Persist goal chain state to session.
+	 */
+	async persistToSession(pi: { appendEntry?: (customType: string, data?: unknown) => void } | undefined): Promise<boolean> {
+		if (typeof pi?.appendEntry !== "function") {
+			return false;
+		}
+
+		pi.appendEntry("telos:goal-chains", this.getPersistenceSnapshot());
+		return true;
+	}
 
 	/**
 	 * Create a new goal chain
@@ -190,22 +272,29 @@ export class GoalChainManager {
 			subGoal.completedAt = Date.now();
 		}
 
-		// Add to record space
-		const details = learnings
-			? `Sub-goal ${status} with learnings: ${learnings.join(", ")}`
+		// Add to record space. Learnings are only evolutionary evidence when a sub-goal
+		// completes or blocks; active updates are progress bookkeeping and should not
+		// feed reproductive mutation.
+		const evolutionaryLearnings = status === "complete" || status === "blocked" ? learnings : undefined;
+		const details = evolutionaryLearnings
+			? `Sub-goal ${status} with learnings: ${evolutionaryLearnings.join(", ")}`
 			: `Sub-goal ${status}`;
+
+		const recordType =
+			status === "complete" ? "goal_completed" : status === "blocked" ? "goal_blocked" : "goal_updated";
 
 		this.addToRecordSpace(
 			chain,
-			status === "complete" ? "goal_completed" : "goal_blocked",
+			recordType,
 			subGoalId,
 			details,
 			status === "complete",
-			learnings,
+			evolutionaryLearnings,
 		);
 
-		// Check if we should evolve the chain
-		if (this.shouldEvolveChain(chain)) {
+		// Check if we should evolve the chain.
+		// Active status updates are progress bookkeeping, not completed evidence.
+		if ((status === "complete" || status === "blocked") && this.shouldEvolveChain(chain)) {
 			this.evolveChain(chainId);
 		}
 
@@ -219,20 +308,38 @@ export class GoalChainManager {
 		chainId: string,
 		newPrimaryGoal?: string,
 		newPrinciples?: string[],
-		mutationReason: string,
+		mutationReason: string = "Unspecified mutation",
 		confidence: number = 0.7,
+		removePrinciples?: string[],
 	): GoalChainMutation {
 		const chain = this.chains.get(chainId);
 		if (!chain) {
 			throw new Error(`Goal chain ${chainId} not found`);
 		}
 
-		const previousClause = { ...chain.reproductiveClause };
+		const previousClause: ReproductiveClause = {
+			...chain.reproductiveClause,
+			essentialPrinciples: [...chain.reproductiveClause.essentialPrinciples],
+			invariantConstraints: [...chain.reproductiveClause.invariantConstraints],
+			mutationGuidelines: [...chain.reproductiveClause.mutationGuidelines],
+		};
+
+		const basePrinciples = this.dedupeTexts(newPrinciples || chain.reproductiveClause.essentialPrinciples);
+		const removedPrincipleKeys = new Set(
+			(removePrinciples || []).map((principle) => this.normalizeText(principle)).filter(Boolean),
+		);
+		const evolvedPrinciples = removedPrincipleKeys.size > 0
+			? basePrinciples.filter((principle) => !removedPrincipleKeys.has(this.normalizeText(principle)))
+			: basePrinciples;
+
+		if (basePrinciples.length > 0 && evolvedPrinciples.length === 0) {
+			throw new Error("Subtractive mutation would remove all essential principles; refusing unsafe mutation");
+		}
 
 		// Create new clause with conservative mutation
 		const newClause: ReproductiveClause = {
 			primaryGoal: newPrimaryGoal || chain.reproductiveClause.primaryGoal,
-			essentialPrinciples: newPrinciples || chain.reproductiveClause.essentialPrinciples,
+			essentialPrinciples: evolvedPrinciples.slice(0, 8),
 			invariantConstraints: [...chain.reproductiveClause.invariantConstraints],
 			mutationGuidelines: [...chain.reproductiveClause.mutationGuidelines],
 			lifelineTimestamp: Date.now(),
@@ -247,6 +354,7 @@ export class GoalChainManager {
 		chain.primaryGoal = newClause.primaryGoal;
 		chain.lastMutationAt = Date.now();
 		chain.currentGeneration++;
+		chain.totalGenerations = Math.max(chain.totalGenerations, chain.currentGeneration);
 
 		// Add to record space
 		this.addToRecordSpace(chain, "goal_mutated", chainId, mutationReason);
@@ -277,8 +385,12 @@ export class GoalChainManager {
 		const completedGoals = chain.subGoals.filter((sg) => sg.status === "complete");
 		const blockedGoals = chain.subGoals.filter((sg) => sg.status === "blocked");
 
-		// Extract learnings from record space
-		const learnings = chain.recordSpace.flatMap((entry) => entry.learnings || []);
+		// Extract only fresh completion/blocking learnings since the last mutation.
+		const lastMutationIndex = chain.recordSpace.findLastIndex((entry) => entry.type === "goal_mutated");
+		const learnings = chain.recordSpace
+			.slice(lastMutationIndex + 1)
+			.filter((entry) => entry.type === "goal_completed" || entry.type === "goal_blocked")
+			.flatMap((entry) => entry.learnings || []);
 
 		// Conservative mutation based on learnings
 		if (learnings.length > 0 && completedGoals.length >= 2) {
@@ -303,11 +415,17 @@ export class GoalChainManager {
 	private shouldEvolveChain(chain: GoalChain): boolean {
 		const completedGoals = chain.subGoals.filter((sg) => sg.status === "complete");
 		const minGoalsForEvolution = 2;
+		const lastMutationIndex = chain.recordSpace.findLastIndex((entry) => entry.type === "goal_mutated");
+		const recordsSinceLastMutation = chain.recordSpace.slice(lastMutationIndex + 1);
 
-		// Need minimum completed goals and some learnings
+		// Need minimum completed goals and fresh completion/blocking learnings since the last mutation.
 		return (
 			completedGoals.length >= minGoalsForEvolution &&
-			chain.recordSpace.some((entry) => entry.learnings && entry.learnings.length > 0)
+			recordsSinceLastMutation.some(
+				(entry) =>
+					(entry.type === "goal_completed" || entry.type === "goal_blocked") &&
+					Boolean(entry.learnings && entry.learnings.length > 0),
+			)
 		);
 	}
 
@@ -315,7 +433,8 @@ export class GoalChainManager {
 	 * Refine principles based on learnings
 	 */
 	private refinePrinciples(currentPrinciples: string[], learnings: string[]): string[] {
-		// Conservative refinement - keep existing principles and add derived ones
+		// Conservative refinement - keep existing principles and add derived ones.
+		// Dedupe while preserving order so repeated evolution does not bloat the lifeline.
 		const refinedPrinciples = [...currentPrinciples];
 
 		// Extract new principles from learnings (simplified - would be LLM-generated)
@@ -325,8 +444,23 @@ export class GoalChainManager {
 
 		refinedPrinciples.push(...learningThemes);
 
-		// Keep only top principles to prevent bloat
-		return refinedPrinciples.slice(0, 8);
+		return this.dedupeTexts(refinedPrinciples).slice(0, 8);
+	}
+
+	private dedupeTexts(values: string[]): string[] {
+		const seen = new Set<string>();
+		return values.filter((value) => {
+			const normalized = this.normalizeText(value);
+			if (!normalized || seen.has(normalized)) {
+				return false;
+			}
+			seen.add(normalized);
+			return true;
+		});
+	}
+
+	private normalizeText(value: string): string {
+		return value.trim().replace(/\s+/g, " ").toLowerCase();
 	}
 
 	/**
@@ -339,32 +473,49 @@ export class GoalChainManager {
 		}
 
 		const inferredGoals: SubGoal[] = [];
+		const existingObjectives = new Set(
+			chain.subGoals.map((subGoal) => this.normalizeText(subGoal.objective)),
+		);
+		const addInferredGoal = (objective: string, details: string) => {
+			const normalized = this.normalizeText(objective);
+			if (!normalized || existingObjectives.has(normalized)) {
+				return;
+			}
+
+			const subGoal = this.createSubGoal(objective, 0, chain.currentGeneration);
+			subGoal.inferredFromRecord = true;
+			inferredGoals.push(subGoal);
+			existingObjectives.add(normalized);
+			this.addToRecordSpace(chain, "inference", subGoal.id, details);
+		};
 
 		// Analyze record space for patterns
 		const blockedGoals = chain.subGoals.filter((sg) => sg.status === "blocked");
 		const completedGoals = chain.subGoals.filter((sg) => sg.status === "complete");
+		const actionableGoals = chain.subGoals.filter((sg) => sg.status === "pending" || sg.status === "active");
 
-		// Inference 1: If goals are blocked, infer alternative approaches
+		// Inference 1: If goals are blocked, infer alternative approaches even when there
+		// are no prior successes yet. Being blocked is already evidence to reframe.
 		blockedGoals.forEach((blockedGoal) => {
 			const alternativeObjective = this.inferAlternativeObjective(blockedGoal.objective, chain.recordSpace);
 			if (alternativeObjective) {
-				const subGoal = this.createSubGoal(alternativeObjective, 0, chain.currentGeneration);
-				subGoal.inferredFromRecord = true;
-				inferredGoals.push(subGoal);
-
-				this.addToRecordSpace(chain, "inference", subGoal.id, `Inferred from blocked goal ${blockedGoal.id}`);
+				addInferredGoal(alternativeObjective, `Inferred from blocked goal ${blockedGoal.id}`);
 			}
 		});
 
-		// Inference 2: If primary goal is complex, infer intermediate steps
-		if (chain.primaryGoal.length > 200 && completedGoals.length < chain.subGoals.length / 2) {
-			const intermediateSteps = this.inferIntermediateSteps(chain.primaryGoal, chain.recordSpace);
-			intermediateSteps.forEach((objective) => {
-				const subGoal = this.createSubGoal(objective, 0, chain.currentGeneration);
-				subGoal.inferredFromRecord = true;
-				inferredGoals.push(subGoal);
+		// Inference 2: If no actionable work remains, infer practical next steps from
+		// the primary goal. This makes /goalchain infer useful for empty or fully
+		// completed-but-still-active chains.
+		if (actionableGoals.length === 0) {
+			this.inferNextStepsFromPrimaryGoal(chain).forEach((objective) => {
+				addInferredGoal(objective, "Inferred as next actionable step from primary goal");
+			});
+		}
 
-				this.addToRecordSpace(chain, "inference", subGoal.id, "Inferred as intermediate step");
+		// Inference 3: If primary goal is complex and progress is still sparse, infer intermediate steps.
+		if (chain.primaryGoal.length > 200 && completedGoals.length < Math.max(1, chain.subGoals.length / 2)) {
+			this.inferIntermediateSteps(chain.primaryGoal, chain.recordSpace).forEach((objective) => {
+				addInferredGoal(objective, "Inferred as intermediate step");
 			});
 		}
 
@@ -378,17 +529,56 @@ export class GoalChainManager {
 	 * Infer alternative objective for blocked goal
 	 */
 	private inferAlternativeObjective(blockedObjective: string, recordSpace: RecordSpaceEntry[]): string | null {
-		// Simplified inference - would be LLM-generated in practice
-		const successPatterns = recordSpace
-			.filter((entry) => entry.success && entry.type === "goal_completed")
-			.map((entry) => entry.details);
+		const recentLearning = recordSpace
+			.slice()
+			.reverse()
+			.find((entry) => entry.learnings && entry.learnings.length > 0)
+			?.learnings?.[0];
 
-		if (successPatterns.length === 0) {
-			return null;
+		if (recentLearning) {
+			return `Rework blocked goal with recent learning in mind: ${blockedObjective}`;
 		}
 
-		// Return a modified version suggesting alternative approach
-		return `Alternative approach to: ${blockedObjective}`;
+		return `Break down and retry blocked goal: ${blockedObjective}`;
+	}
+
+	private inferNextStepsFromPrimaryGoal(chain: GoalChain): string[] {
+		const goal = chain.primaryGoal.trim();
+		const steps: string[] = [];
+		const lowerGoal = goal.toLowerCase();
+
+		if (chain.subGoals.length === 0) {
+			steps.push(`Decompose primary goal into concrete sub-goals: ${this.truncateText(goal, 140)}`);
+		}
+
+		if (lowerGoal.includes("fix") || lowerGoal.includes("bug") || lowerGoal.includes("stable")) {
+			steps.push("Audit current behavior and identify the smallest existing-feature bug to fix next");
+			steps.push("Add or run a focused smoke test that proves the selected fix works");
+		}
+
+		if (lowerGoal.includes("test") || lowerGoal.includes("isolation") || lowerGoal.includes("pi-test")) {
+			steps.push("Run the extension in isolated pi-test configuration and record the observed behavior");
+		}
+
+		if (lowerGoal.includes("github") || lowerGoal.includes("commit") || lowerGoal.includes("discipline")) {
+			steps.push("Review git status and separate unrelated changes before committing or syncing fixes");
+		}
+
+		if (lowerGoal.includes("develop") || lowerGoal.includes("codebase") || lowerGoal.includes("software")) {
+			steps.push("Inspect recent changes for a lean refactor or cleanup that supports the primary goal without adding scope");
+		}
+
+		if (steps.length === 0) {
+			steps.push(`Identify the next smallest verifiable step toward: ${this.truncateText(goal, 140)}`);
+			steps.push("Validate the next step with direct evidence before marking it complete");
+		}
+
+		return steps.slice(0, 4);
+	}
+
+	private truncateText(value: string, maxLength: number): string {
+		const normalized = value.trim().replace(/\s+/g, " ");
+		return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized;
 	}
 
 	/**
@@ -480,39 +670,121 @@ export class GoalChainManager {
 	 * Format goal chain for display
 	 */
 	formatGoalChain(chain: GoalChain): string {
+		const createdAt = new Date(chain.createdAt).toLocaleString();
+		const lastMutation = new Date(chain.lastMutationAt).toLocaleString();
+		const toSafeText = (value: unknown) => {
+			if (typeof value !== "string") {
+				return "<invalid text>";
+			}
+			const trimmed = value.trim();
+			if (!trimmed) {
+				return "<empty>";
+			}
+			return trimmed.replace(/\s+/g, " ");
+		};
+
 		const lines = [
 			`GOAL CHAIN: ${chain.id}`,
 			`Status: ${chain.status.toUpperCase()}`,
 			`Generation: ${chain.currentGeneration} / ${chain.totalGenerations}`,
+			`Created: ${createdAt}`,
+			`Last Mutation: ${lastMutation}`,
+			`Sub-Goals: ${chain.subGoals.length}`,
 			``,
 			`PRIMARY GOAL:`,
-			chain.primaryGoal,
+			`${toSafeText(chain.primaryGoal)}`,
 			``,
 			`REPRODUCTIVE CLAUSE (v${chain.reproductiveClause.version}):`,
+			`  Updated: ${new Date(chain.reproductiveClause.lifelineTimestamp).toLocaleString()}`,
 			`  Essential Principles:`,
-			...chain.reproductiveClause.essentialPrinciples.map((p) => `    - ${p}`),
+			...(chain.reproductiveClause.essentialPrinciples || []).map((principle, index) =>
+				`    ${index + 1}. ${toSafeText(principle)}`,
+			),
 			`  Mutation Guidelines:`,
-			...chain.reproductiveClause.mutationGuidelines.map((g) => `    - ${g}`),
+			...(chain.reproductiveClause.mutationGuidelines || []).map((guideline, index) =>
+				`    ${index + 1}. ${toSafeText(guideline)}`,
+			),
+			`  Invariant Constraints:`,
+			...(chain.reproductiveClause.invariantConstraints || []).map((constraint, index) =>
+				`    ${index + 1}. ${toSafeText(constraint)}`,
+			),
 			``,
-			`SUB-GOALS (${chain.subGoals.length}):`,
+			`SUB-GOALS:`,
 		];
 
-		chain.subGoals.forEach((subGoal, index) => {
-			const inferred = subGoal.inferredFromRecord ? " [inferred]" : "";
-			lines.push(
-				`  ${index + 1}. [${subGoal.status.toUpperCase()}]${inferred} ${subGoal.objective}`,
+		if (chain.subGoals.length === 0) {
+			lines.push("  (none)");
+		} else {
+			const now = Date.now();
+			const completedSubGoals = chain.subGoals.filter((subGoal) => subGoal.status === "complete");
+			const completedByRecency = [...completedSubGoals].sort(
+				(a, b) => (b.completedAt || b.createdAt) - (a.completedAt || a.createdAt),
 			);
-			if (subGoal.tokenBudget) {
-				const percent = subGoal.tokensUsed
-					? Math.round((subGoal.tokensUsed / subGoal.tokenBudget) * 100)
-					: 0;
-				lines.push(`     Budget: ${subGoal.tokensUsed}/${subGoal.tokenBudget} (${percent}%)`);
+			const retainedCompletedIds = new Set(
+				completedByRecency
+					.filter(
+						(subGoal, index) =>
+							index < GoalChainManager.COMPLETED_SUB_GOAL_FULL_DISPLAY_LIMIT ||
+							Boolean(
+								subGoal.completedAt &&
+									now - subGoal.completedAt <= GoalChainManager.COMPLETED_SUB_GOAL_RECENT_WINDOW_MS,
+							),
+					)
+					.map((subGoal) => subGoal.id),
+			);
+			const archivedCompleted = completedSubGoals.filter((subGoal) => !retainedCompletedIds.has(subGoal.id));
+
+			if (archivedCompleted.length > 0) {
+				const latestArchived = archivedCompleted.reduce((latest, subGoal) =>
+					(subGoal.completedAt || subGoal.createdAt) > (latest.completedAt || latest.createdAt)
+						? subGoal
+						: latest,
+				);
+				lines.push(
+					`  (${archivedCompleted.length} older completed sub-goal(s) summarized to preserve context; latest archived completion: ${new Date(
+						latestArchived.completedAt || latestArchived.createdAt,
+					).toLocaleString()})`,
+				);
 			}
-		});
+
+			chain.subGoals.forEach((subGoal, index) => {
+				if (subGoal.status === "complete" && !retainedCompletedIds.has(subGoal.id)) {
+					return;
+				}
+
+				const inferred = subGoal.inferredFromRecord ? " [inferred]" : "";
+				lines.push(
+					`  ${index + 1}. [${subGoal.status.toUpperCase()}]${inferred} Gen ${subGoal.generation} - ${toSafeText(
+						subGoal.objective,
+					)}`,
+				);
+				if (subGoal.tokenBudget) {
+					const percent = subGoal.tokensUsed
+						? Math.round((subGoal.tokensUsed / subGoal.tokenBudget) * 100)
+						: 0;
+					lines.push(`     Budget: ${subGoal.tokensUsed}/${subGoal.tokenBudget} (${percent}%)`);
+				}
+				if (subGoal.completedAt) {
+					lines.push(`     Completed: ${new Date(subGoal.completedAt).toLocaleString()}`);
+				}
+			});
+		}
 
 		lines.push("");
+		if (chain.recordSpace.length === 0) {
+			lines.push(`RECORD SPACE: (0 entries)`);
+			return lines.join("\n");
+		}
+
 		lines.push(`RECORD SPACE (${chain.recordSpace.length} entries):`);
-		lines.push(`  Latest: ${chain.recordSpace[chain.recordSpace.length - 1]?.details || "None"}`);
+		const latestEntries = chain.recordSpace.slice(-5);
+		latestEntries.forEach((entry, index) => {
+			lines.push(
+				`  ${chain.recordSpace.length - latestEntries.length + index + 1}. [${entry.type}] ${new Date(
+					entry.timestamp,
+				).toLocaleString()} -> ${toSafeText(entry.details)}`,
+			);
+		});
 
 		return lines.join("\n");
 	}

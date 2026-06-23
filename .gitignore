@@ -34,6 +34,7 @@ yarn-error.log*
 # Testing
 coverage/
 .nyc_output/
+pi-test/
 
 # Temporary files
 *.tmp
