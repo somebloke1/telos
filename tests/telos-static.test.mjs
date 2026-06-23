@@ -70,3 +70,10 @@ test("GitHub development workflow exposes issue and PR helpers", async () => {
 	assert.match(docs, /npm run github:pr/);
 	assert.match(docs, /Fixes #<issue>/);
 });
+
+test("Type-check workflow does not require an npm lockfile cache", async () => {
+	const workflow = await readSource(".github/workflows/type-check.yml");
+
+	assert.match(workflow, /node-version: '24'/);
+	assert.doesNotMatch(workflow, /cache: 'npm'/);
+});
