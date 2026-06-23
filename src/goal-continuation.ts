@@ -69,13 +69,12 @@ export class GoalContinuation {
 		}
 
 		const goal = this.goalManager.getGoal();
-		if (!goal || goal.status !== "active") {
+		if (!goal) {
 			return;
 		}
 
-		// Check if budget limited
-		if (goal.status === "budget_limited") {
-			this.continuationEnabled = false;
+		// Only continue if goal is active
+		if (goal.status !== "active") {
 			return;
 		}
 
