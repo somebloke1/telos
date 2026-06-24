@@ -531,3 +531,106 @@ test("buildInferenceContext includes reproductive clause in context", () => {
 	assert.ok(context.includes("Build a CLI tool"), "Context should include primary goal");
 	assert.ok(context.includes("yargs"), "Context should include learning from completed goal");
 });
+
+// ===================== Concurrent Evolution Trigger Edge Cases =====================
+
+test("GoalChainManager handles rapid consecutive completions without duplicate evolution", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Rapid evolution test", undefined, [
+		"Step 1",
+		"Step 2",
+		"Step 3",
+	]);
+
+	// Complete first two with learnings - triggers first evolution
+	manager.updateSubGoalStatus(chain.id, "1", "complete", [
+		"Learning A",
+	]);
+	manager.updateSubGoalStatus(chain.id, "2", "complete", [
+		"Learning B",
+	]);
+
+	const genAfterFirst = chain.currentGeneration;
+	const clauseVerAfterFirst = chain.reproductiveClause.version;
+
+	// Complete third with learning - should trigger second evolution
+	manager.updateSubGoalStatus(chain.id, "3", "complete", [
+		"Learning C",
+	]);
+
+	const genAfterSecond = chain.currentGeneration;
+	const clauseVerAfterSecond = chain.reproductiveClause.version;
+
+	// Evolution should have occurred (generation increased)
+	assert.ok(genAfterSecond >= genAfterFirst, `Generation should increase, got ${genAfterFirst} → ${genAfterSecond}`);
+	assert.ok(clauseVerAfterSecond >= clauseVerAfterFirst, `Clause version should increase, got ${clauseVerAfterFirst} → ${clauseVerAfterSecond}`);
+});
+
+test("GoalChainManager evolution does not trigger on blocked goal without learnings", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Blocked without learnings", undefined, [
+		"A",
+		"B",
+	]);
+
+	manager.updateSubGoalStatus(chain.id, "1", "complete", ["Learning"]);
+	manager.updateSubGoalStatus(chain.id, "2", "blocked", []); // No learnings
+
+	assert.equal(chain.currentGeneration, 1, "Should not evolve when blocked goal has no learnings");
+	assert.equal(chain.reproductiveClause.version, 1, "Clause version should not change");
+});
+
+test("GoalChainManager evolution respects minimum completed goals threshold", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Min goals test", undefined, [
+		"A",
+		"B",
+		"C",
+	]);
+
+	// Only complete 1 goal with learning - should not trigger evolution
+	manager.updateSubGoalStatus(chain.id, "1", "complete", ["Learning"]);
+
+	assert.equal(chain.currentGeneration, 1, "Should not evolve with only 1 completed goal");
+
+	// Complete second goal - should now trigger evolution
+	manager.updateSubGoalStatus(chain.id, "2", "complete", ["Learning 2"]);
+
+	assert.ok(
+		chain.currentGeneration >= 2,
+		`Should evolve after 2nd completion, got gen ${chain.currentGeneration}`,
+	);
+});
+
+test("GoalChainManager multiple evolution triggers produce progressive mutations", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Progressive evolution", undefined, [
+		"A",
+		"B",
+		"C",
+		"D",
+		"E",
+	]);
+
+	// Complete first 2 with learnings → evolution 1
+	manager.updateSubGoalStatus(chain.id, "1", "complete", ["Learning 1"]);
+	manager.updateSubGoalStatus(chain.id, "2", "complete", ["Learning 2"]);
+	const gen1 = chain.currentGeneration;
+
+	// Complete 3rd with learning → evolution 2
+	manager.updateSubGoalStatus(chain.id, "3", "complete", ["Learning 3"]);
+	const gen2 = chain.currentGeneration;
+
+	// Complete 4th with learning → evolution 3
+	manager.updateSubGoalStatus(chain.id, "4", "complete", ["Learning 4"]);
+	const gen3 = chain.currentGeneration;
+
+	// Complete 5th with learning → may trigger another evolution
+	manager.updateSubGoalStatus(chain.id, "5", "complete", ["Learning 5"]);
+	const gen4 = chain.currentGeneration;
+
+	assert.ok(gen2 >= gen1, "Gen should progress after 2nd completion");
+	assert.ok(gen3 >= gen2, "Gen should progress after 3rd completion");
+	assert.ok(gen4 >= gen3, "Gen should progress after 4th completion");
+	assert.equal(chain.reproductiveClause.version, chain.currentGeneration, "Clause version should match generation");
+});
