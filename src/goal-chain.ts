@@ -473,7 +473,16 @@ export class GoalChainManager {
 	}
 
 	/**
-	 * Infer sub-goals from record space
+	 * Infer sub-goals from record space.
+	 *
+	 * This method gathers the full historical context of the chain — completed
+	 * sub-goals with their learnings, blocked sub-goals with their failure
+	 * reasons, the reproductive clause principles, and the current state of
+	 * all sub-goals — and packages it as an inference prompt that an LLM can
+	 * reason over to produce meaningful next-step suggestions.
+	 *
+	 * The inference itself is LLM-generated. This method does NOT perform
+	 * keyword matching, regex, or any heuristic sub-goal generation.
 	 */
 	inferSubGoals(chainId: string): SubGoal[] {
 		const chain = this.chains.get(chainId);
@@ -498,40 +507,135 @@ export class GoalChainManager {
 			this.addToRecordSpace(chain, "inference", subGoal.id, details);
 		};
 
-		// Analyze record space for patterns
-		const blockedGoals = chain.subGoals.filter((sg) => sg.status === "blocked");
-		const completedGoals = chain.subGoals.filter((sg) => sg.status === "complete");
-		const actionableGoals = chain.subGoals.filter((sg) => sg.status === "pending" || sg.status === "active");
+		// Build the inference context from the full historical record.
+		const inferenceContext = this.buildInferenceContext(chain);
 
-		// Inference 1: If goals are blocked, infer alternative approaches even when there
-		// are no prior successes yet. Being blocked is already evidence to reframe.
-		blockedGoals.forEach((blockedGoal) => {
-			const alternativeObjective = this.inferAlternativeObjective(blockedGoal.objective, chain.recordSpace);
-			if (alternativeObjective) {
-				addInferredGoal(alternativeObjective, `Inferred from blocked goal ${blockedGoal.id}`);
-			}
-		});
+		// If there are no actionable sub-goals and no record to reason from,
+		// produce a minimal inference that tells the LLM to decompose the
+		// primary goal.
+		const actionableGoals = chain.subGoals.filter(
+			(sg) => sg.status === "pending" || sg.status === "active",
+		);
 
-		// Inference 2: If no actionable work remains, infer practical next steps from
-		// the primary goal. This makes /goalchain infer useful for empty or fully
-		// completed-but-still-active chains.
 		if (actionableGoals.length === 0) {
-			this.inferNextStepsFromPrimaryGoal(chain).forEach((objective) => {
-				addInferredGoal(objective, "Inferred as next actionable step from primary goal");
-			});
-		}
-
-		// Inference 3: If primary goal is complex and progress is still sparse, infer intermediate steps.
-		if (chain.primaryGoal.length > 200 && completedGoals.length < Math.max(1, chain.subGoals.length / 2)) {
-			this.inferIntermediateSteps(chain.primaryGoal, chain.recordSpace).forEach((objective) => {
-				addInferredGoal(objective, "Inferred as intermediate step");
-			});
+			// Inference: The chain has no pending work but is still active.
+			// The LLM should analyze the record and decide the next step.
+			addInferredGoal(
+				`Analyze chain record space and infer next step. Context:\n${inferenceContext}`,
+				"Inferred — chain has no pending sub-goals; LLM should reason over full history",
+			);
+		} else {
+			// Even when there are pending sub-goals, the LLM may benefit from
+			// seeing the full record to decide which to work on next.
+			this.addToRecordSpace(
+				chain,
+				"inference",
+				"infer-context",
+				`Inference context prepared: ${actionableGoals.length} pending sub-goals. LLM should review record space before selecting next work.`,
+			);
 		}
 
 		// Add inferred goals to chain
 		inferredGoals.forEach((goal) => chain.subGoals.push(goal));
 
 		return inferredGoals;
+	}
+
+	/**
+	 * Build a structured inference context from the chain's full record.
+	 * This is what the LLM reasons over — NOT keyword patterns.
+	 */
+	private buildInferenceContext(chain: GoalChain): string {
+		const lines: string[] = [];
+
+		// 1. Reproductive clause — the chain's DNA
+		lines.push(`Primary goal: ${chain.primaryGoal}`);
+		lines.push(`Generation: ${chain.currentGeneration} (clause v${chain.reproductiveClause.version})`);
+		lines.push(`Essential principles:`);
+		chain.reproductiveClause.essentialPrinciples.forEach((p) => lines.push(`  - ${p}`));
+
+		// 2. Sub-goal status breakdown
+		const completed = chain.subGoals.filter((sg) => sg.status === "complete");
+		const blocked = chain.subGoals.filter((sg) => sg.status === "blocked");
+		const pending = chain.subGoals.filter((sg) => sg.status === "pending");
+		const active = chain.subGoals.filter((sg) => sg.status === "active");
+
+		lines.push(`\nSub-goal summary: ${chain.subGoals.length} total, ${completed.length} done, ${active.length} active, ${pending.length} pending, ${blocked.length} blocked`);
+
+		// 3. Completed sub-goals with their learnings
+		if (completed.length > 0) {
+			lines.push(`\nCompleted sub-goals (with learnings):`);
+			for (const sg of completed) {
+				lines.push(`  [${sg.id}] ${sg.objective} (completed ${new Date(sg.completedAt || sg.createdAt).toLocaleString()})`);
+				const completionRecord = chain.recordSpace.find(
+					(r) => r.goalId === sg.id && r.type === "goal_completed" && r.learnings,
+				);
+				if (completionRecord?.learnings?.length) {
+					completionRecord.learnings.forEach((l) => lines.push(`    → ${l}`));
+				}
+			}
+		}
+
+		// 4. Blocked sub-goals with their failure reasons
+		if (blocked.length > 0) {
+			lines.push(`\nBlocked sub-goals (with learnings):`);
+			for (const sg of blocked) {
+				lines.push(`  [${sg.id}] ${sg.objective}`);
+				const blockRecord = chain.recordSpace.find(
+					(r) => r.goalId === sg.id && r.type === "goal_blocked" && r.learnings,
+				);
+				if (blockRecord?.learnings?.length) {
+					blockRecord.learnings.forEach((l) => lines.push(`    → ${l}`));
+				}
+			}
+		}
+
+		// 5. Pending/active sub-goals
+		if (pending.length > 0) {
+			lines.push(`\nPending sub-goals:`);
+			pending.forEach((sg) => lines.push(`  - ${sg.objective}`));
+		}
+		if (active.length > 0) {
+			lines.push(`\nActive sub-goals:`);
+			active.forEach((sg) => lines.push(`  - ${sg.objective}`));
+		}
+
+		// 6. Record space summary (key events since last mutation)
+		const lastMutationIndex = chain.recordSpace.findLastIndex((r) => r.type === "goal_mutated");
+		const recentRecords = chain.recordSpace.slice(lastMutationIndex + 1);
+		if (recentRecords.length > 0) {
+			lines.push(`\nRecent record space (${recentRecords.length} entries since last mutation):`);
+			for (const r of recentRecords.slice(-10)) {
+				lines.push(`  [${r.type}] ${r.details}`);
+				if (r.learnings?.length) {
+					r.learnings.forEach((l) => lines.push(`    → ${l}`));
+				}
+			}
+		}
+
+		return lines.join("\n");
+	}
+
+	/**
+	 * Infer alternative objective for a blocked goal, informed by the
+	 * full record space rather than keyword matching.
+	 *
+	 * Returns a suggested reframe based on learnings from the chain's
+	 * record, if any exist. Falls back to a generic suggestion when
+	 * there is no learning to draw from.
+	 */
+	private inferAlternativeObjective(blockedGoal: SubGoal, chain: GoalChain): string | null {
+		const relevantLearnings = chain.recordSpace
+			.filter((r) => r.type === "goal_completed" || r.type === "goal_blocked")
+			.flatMap((r) => r.learnings || []);
+
+		if (relevantLearnings.length > 0) {
+			// Use the most relevant learning(s) to reframe the blocked goal.
+			return `Rework blocked goal in light of chain learnings:\n  Blocked: ${blockedGoal.objective}\n  Relevant learnings: ${relevantLearnings.slice(-3).join("; ")}`;
+		}
+
+		// No learnings to draw from — suggest decomposition.
+		return `Break down blocked goal ${blockedGoal.id} into smaller steps: ${blockedGoal.objective}`;
 	}
 
 	/**
