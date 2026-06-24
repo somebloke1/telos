@@ -68,6 +68,18 @@ export interface GoalChainPersistenceEntry {
 	chains: GoalChain[];
 }
 
+/** Session validation result for diagnostics. */
+export interface SessionValidationResult {
+	valid: boolean;
+	version: number | null;
+	chainCount: number;
+	skippedChains: string[];
+	warnings: string[];
+}
+
+/** Minimum supported schema version. */
+const MIN_SCHEMA_VERSION = 1;
+
 /** Truncate text for display with ellipsis. */
 function truncateForDisplay(value: string, maxLength: number): string {
 	const cleaned = value.trim().replace(/\s+/g, " ");
@@ -87,7 +99,61 @@ export class GoalChainManager {
 	private subGoalIdCounter = 1;
 
 	/**
-	 * Load goal chain state from session data.
+	 * Validate a persistence entry, returning structured diagnostics.
+	 * Used by /goalchain diagnose and internal error recovery.
+	 */
+	static validateEntry(entry: unknown): SessionValidationResult {
+		const warnings: string[] = [];
+		const skippedChains: string[] = [];
+
+		if (!entry || typeof entry !== "object") {
+			return { valid: false, version: null, chainCount: 0, skippedChains, warnings: ["Entry is not a valid object"] };
+		}
+
+		const data = entry as Record<string, unknown>;
+		const version = typeof data.schemaVersion === "number" ? data.schemaVersion : null;
+
+		if (version !== null) {
+			if (version < MIN_SCHEMA_VERSION) {
+				warnings.push(`Schema version ${version} is below minimum supported version ${MIN_SCHEMA_VERSION}`);
+			}
+			if (version > GoalChainManager.SCHEMA_VERSION) {
+				warnings.push(`Schema version ${version} is newer than current version ${GoalChainManager.SCHEMA_VERSION} — loaded with potential incompatibilities`);
+			}
+		}
+
+		const chains = data.chains;
+		if (!Array.isArray(chains)) {
+			return { valid: false, version, chainCount: 0, skippedChains, warnings: [...warnings, "No chains array found"] };
+		}
+
+		let chainCount = 0;
+		for (const chain of chains) {
+			if (!chain || typeof chain !== "object") {
+				skippedChains.push("<invalid>");
+				warnings.push("Skipped non-object chain entry");
+				continue;
+			}
+			const c = chain as Record<string, unknown>;
+			if (!c.id || !c.primaryGoal) {
+				skippedChains.push(String(c.id || "unknown"));
+				warnings.push(`Chain "${c.id}" missing id or primaryGoal — skipped`);
+				continue;
+			}
+			if (!c.reproductiveClause || typeof c.reproductiveClause !== "object") {
+				skippedChains.push(String(c.id));
+				warnings.push(`Chain "${c.id}" missing reproductive clause — skipped`);
+				continue;
+			}
+			chainCount++;
+		}
+
+		const valid = chainCount > 0 && !warnings.some(w => w.includes("below minimum"));
+		return { valid, version, chainCount, skippedChains, warnings };
+	}
+
+	/**
+	 * Load goal chain state from session data with validation and graceful degradation.
 	 */
 	loadFromSession(sessionManager: { getEntries?: () => Array<{ type?: string; customType?: string; data?: unknown }>; getBranch?: () => Array<{ type?: string; customType?: string; data?: unknown }> }): void {
 		this.chains = new Map();
@@ -119,17 +185,33 @@ export class GoalChainManager {
 			return;
 		}
 
+		// Validate the persistence entry before loading
+		const validation = GoalChainManager.validateEntry(latestEntry);
+		if (!validation.valid) {
+			// Graceful degradation: still attempt to load what we can
+			// but log warnings for diagnostics
+			if (validation.version !== null && validation.version < MIN_SCHEMA_VERSION) {
+				// Old schema — skip entirely to prevent corruption
+				return;
+			}
+		}
+
 		this.chainIdCounter = Number(latestEntry.chainIdCounter) > 0 ? Number(latestEntry.chainIdCounter) : 1;
 		this.subGoalIdCounter = Number(latestEntry.subGoalIdCounter) > 0 ? Number(latestEntry.subGoalIdCounter) : 1;
 
 		for (const chain of latestEntry.chains) {
-			if (!chain || !chain.id || !chain.primaryGoal) {
+			if (!chain || typeof chain !== "object" || !chain.id || !chain.primaryGoal) {
 				continue;
 			}
-			this.chains.set(chain.id, chain);
+			// Validate reproductive clause
+			const clause = (chain as any).reproductiveClause;
+			if (!clause || typeof clause !== "object" || !clause.primaryGoal || !clause.essentialPrinciples) {
+				continue;
+			}
+			this.chains.set(chain.id, chain as GoalChain);
 			this.reproductiveClauseCache.set(chain.id, {
-				clause: chain.reproductiveClause,
-				timestamp: chain.reproductiveClause.lifelineTimestamp,
+				clause: clause as ReproductiveClause,
+				timestamp: clause.lifelineTimestamp,
 			});
 		}
 	}

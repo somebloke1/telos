@@ -1184,17 +1184,49 @@ async function handleGoalChainCommand(
 				| undefined;
 			const persistedChains = latestEntry?.data?.chains || [];
 			const chains = goalChainManager.getAllGoalChains();
-			ctx.ui.notify(
-				[
-					"GoalChain diagnostics:",
-					`- In-memory chains: ${chains.length} (${chains.map((c) => c.id).join(", ") || "none"})`,
-					`- Session entries: ${chainEntries.length}`,
-					`- Latest schema: ${latestEntry?.data?.schemaVersion ?? "none"}`,
-					`- Persisted chains: ${persistedChains.length} (${persistedChains.map((c) => c.id || "<missing id>").join(", ") || "none"})`,
-					`- Persisted goals: ${persistedChains.map((c) => `${c.id || "<missing id>"}: ${c.primaryGoal || "<no primary goal>"}`).join(" | ") || "none"}`,
-				].join("\n"),
-				"info",
+
+			const lines: string[] = ["GoalChain diagnostics:"];
+			lines.push(`- In-memory chains: ${chains.length} (${chains.map((c) => c.id).join(", ") || "none"})`);
+			lines.push(`- Session entries: ${chainEntries.length}`);
+			lines.push(`- Latest schema: ${latestEntry?.data?.schemaVersion ?? "none"}`);
+			lines.push(`- Persisted chains: ${persistedChains.length} (${persistedChains.map((c) => c.id || "<missing id>").join(", ") || "none"})`);
+			lines.push(`- Persisted goals: ${persistedChains.map((c) => `${c.id || "<missing id>"}: ${c.primaryGoal || "<no primary goal>"}`).join(" | ") || "none"}`);
+
+			// Run validation on each chain entry
+			if (latestEntry?.data) {
+				const validation = GoalChainManager.validateEntry(latestEntry.data);
+				lines.push(`- Validation: ${validation.valid ? "✅ valid" : "❌ invalid"}`);
+				lines.push(`- Schema version: ${validation.version ?? "none"}`);
+				lines.push(`- Chains loaded: ${validation.chainCount}`);
+				if (validation.skippedChains.length > 0) {
+					lines.push(`- Skipped chains: ${validation.skippedChains.join(", ")}`);
+				}
+				if (validation.warnings.length > 0) {
+					lines.push(`- Warnings:`);
+					for (const w of validation.warnings) {
+						lines.push(`  • ${w}`);
+					}
+				}
+			}
+
+			// Session validation for single goals
+			const goalEntries = sessionEntries.filter(
+				(entry: { type?: string; customType?: string }) =>
+					entry.type === "custom" && entry.customType === "telos:goal",
 			);
+			lines.push(`- Goal entries: ${goalEntries.length}`);
+			if (goalEntries.length > 0) {
+				const lastGoal = goalEntries[goalEntries.length - 1].data as { id?: string; status?: string; objective?: string } | null;
+				lines.push(`- Last goal: ${lastGoal?.id || "none"} [${lastGoal?.status || "none"}]`);
+				if (lastGoal?.objective) {
+					const preview = lastGoal.objective.length > 60
+						? lastGoal.objective.slice(0, 60) + "…"
+						: lastGoal.objective;
+					lines.push(`  → ${preview}`);
+				}
+			}
+
+			ctx.ui.notify(lines.join("\n"), "info");
 			break;
 		}
 

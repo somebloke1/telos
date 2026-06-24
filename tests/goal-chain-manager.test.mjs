@@ -193,3 +193,108 @@ test("getPersistenceSnapshot captures full chain state", () => {
 	assert.equal(snapshot.chains[0].primaryGoal, "Task");
 	assert.equal(snapshot.chains[0].subGoals.length, 1);
 });
+
+// ===================== Session Validation =====================
+
+test("GoalChainManager.validateEntry returns valid for good entry", () => {
+	const entry = {
+		schemaVersion: 1,
+		chainIdCounter: 1,
+		subGoalIdCounter: 1,
+		chains: [{
+			id: "chain-1",
+			primaryGoal: "Test goal",
+			reproductiveClause: {
+				primaryGoal: "Test goal",
+				essentialPrinciples: ["Principle 1"],
+				mutationGuidelines: [],
+				invariantConstraints: [],
+				version: 1,
+				lifelineTimestamp: Date.now(),
+			},
+			subGoals: [],
+			status: "active",
+			currentGeneration: 1,
+			totalGenerations: 1,
+			recordSpace: [],
+			createdAt: Date.now(),
+			lastMutationAt: Date.now(),
+		}],
+	};
+	const result = GoalChainManager.validateEntry(entry);
+	assert.ok(result.valid, "Should be valid");
+	assert.equal(result.version, 1);
+	assert.equal(result.chainCount, 1);
+	assert.equal(result.skippedChains.length, 0);
+});
+
+test("GoalChainManager.validateEntry rejects null/invalid entries", () => {
+	const result1 = GoalChainManager.validateEntry(null);
+	assert.ok(!result1.valid);
+
+	const result2 = GoalChainManager.validateEntry("string");
+	assert.ok(!result2.valid);
+
+	const result3 = GoalChainManager.validateEntry({});
+	assert.ok(!result3.valid);
+});
+
+test("GoalChainManager.validateEntry skips chains missing id or primaryGoal", () => {
+	const validChain = {
+		id: "chain-1", primaryGoal: "Good",
+		reproductiveClause: { primaryGoal: "Good", essentialPrinciples: [], mutationGuidelines: [], invariantConstraints: [], version: 1, lifelineTimestamp: Date.now() },
+	};
+	const entry = {
+		schemaVersion: 1,
+		chainIdCounter: 1,
+		subGoalIdCounter: 1,
+		chains: [
+			validChain,
+			{ id: null, primaryGoal: "No id" },
+			{ id: "chain-3", primaryGoal: null },
+		],
+	};
+	const result = GoalChainManager.validateEntry(entry);
+	assert.ok(result.valid);
+	assert.equal(result.chainCount, 1);
+	assert.equal(result.skippedChains.length, 2);
+});
+
+test("GoalChainManager.validateEntry warns on old schema version", () => {
+	const entry = {
+		schemaVersion: 0,
+		chainIdCounter: 1,
+		subGoalIdCounter: 1,
+		chains: [{ id: "chain-1", primaryGoal: "Old schema" }],
+	};
+	const result = GoalChainManager.validateEntry(entry);
+	assert.ok(!result.valid);
+	assert.ok(result.warnings.some(w => w.includes("below minimum")));
+});
+
+test("GoalChainManager.validateEntry warns on future schema version", () => {
+	const entry = {
+		schemaVersion: 99,
+		chainIdCounter: 1,
+		subGoalIdCounter: 1,
+		chains: [{ id: "chain-1", primaryGoal: "Future schema" }],
+	};
+	const result = GoalChainManager.validateEntry(entry);
+	assert.ok(result.warnings.some(w => w.includes("newer than current")));
+});
+
+test("GoalChainManager.validateEntry skips chains with invalid reproductive clause", () => {
+	const entry = {
+		schemaVersion: 1,
+		chainIdCounter: 1,
+		subGoalIdCounter: 1,
+		chains: [
+			{ id: "chain-1", primaryGoal: "Good", reproductiveClause: null },
+			{ id: "chain-2", primaryGoal: "Good2" },
+		],
+	};
+	const result = GoalChainManager.validateEntry(entry);
+	assert.equal(result.chainCount, 0);
+	assert.ok(!result.valid);
+	assert.equal(result.skippedChains.length, 2);
+});
