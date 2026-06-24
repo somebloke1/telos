@@ -29,6 +29,13 @@ const MAX_CHAIN_GOAL_CHARS = 30;
 /** Maximum characters for goal objective display */
 const MAX_GOAL_PREVIEW_CHARS = 40;
 
+/** Evolution symbols for compact display */
+export const EVOLUTION_SYMBOLS: Record<string, string> = {
+	version: "⊕",
+	generation: "g",
+	learnings: "ℒ",
+};
+
 /** Status code mapping for compact display */
 export const STATUS_CODES: Record<string, string> = {
 	active: "A",
@@ -52,6 +59,35 @@ export const CHAIN_STATUS_CODES: Record<string, string> = {
 export function truncate(value: string, maxLen: number): string {
 	const cleaned = value.trim().replace(/\s+/g, " ");
 	return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen - 1)}…` : cleaned;
+}
+
+/**
+ * Format evolution info: clause version, generation, and learnings count.
+ * Produces compact symbols like "⊕3 g4 ℒ2" for clause v3, generation 4, 2 learnings.
+ */
+export function formatEvolutionInfo(chain: GoalChain): string {
+	const parts: string[] = [];
+	const clauseVersion = chain.reproductiveClause.version;
+	if (clauseVersion > 1) {
+		parts.push(`${EVOLUTION_SYMBOLS.version}${clauseVersion}`);
+	}
+	if (chain.currentGeneration > 1) {
+		parts.push(`${EVOLUTION_SYMBOLS.generation}${chain.currentGeneration}`);
+	}
+	// Count unique learnings from record space
+	const allLearnings = new Set<string>();
+	for (const entry of chain.recordSpace) {
+		if (entry.learnings) {
+			for (const l of entry.learnings) {
+				allLearnings.add(l);
+			}
+		}
+	}
+	const learningsCount = allLearnings.size;
+	if (learningsCount > 0) {
+		parts.push(`${EVOLUTION_SYMBOLS.learnings}${learningsCount}`);
+	}
+	return parts.join(" ");
 }
 
 /**
@@ -98,9 +134,9 @@ export function renderGoalFooter(
 			const chainCode = CHAIN_STATUS_CODES[latestChain.status] ?? "·";
 			const truncatedGoal = truncate(latestChain.primaryGoal, MAX_CHAIN_GOAL_CHARS);
 			const progress = formatSubGoalProgress(latestChain);
-			const genInfo =
-				latestChain.currentGeneration > 1 ? ` gen${latestChain.currentGeneration}` : "";
-			chainStatus = `${chainCode}${genInfo} ${truncatedGoal} [${progress}]`;
+			const evolution = formatEvolutionInfo(latestChain);
+			const evolutionInfo = evolution ? ` [${evolution}]` : "";
+			chainStatus = `${chainCode} ${truncatedGoal}${evolutionInfo} [${progress}]`;
 		}
 	}
 

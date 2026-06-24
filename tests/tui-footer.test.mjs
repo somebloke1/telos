@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { truncate, formatSubGoalProgress, STATUS_CODES, CHAIN_STATUS_CODES } from "../src/tui/footer.js";
+import { GoalChainManager } from "../src/goal-chain.js";
+import { truncate, formatSubGoalProgress, formatEvolutionInfo, STATUS_CODES, CHAIN_STATUS_CODES, EVOLUTION_SYMBOLS } from "../src/tui/footer.js";
 
 // ===================== truncate tests =====================
 
@@ -106,4 +107,64 @@ test("formatSubGoalProgress handles single active sub-goal", () => {
 test("formatSubGoalProgress handles single blocked sub-goal", () => {
 	const chain = { subGoals: [{ status: "blocked" }] };
 	assert.equal(formatSubGoalProgress(chain), "1 blocked");
+});
+
+// ===================== formatEvolutionInfo Tests =====================
+
+test("formatEvolutionInfo returns empty for fresh chain", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Test", undefined, ["Step"]);
+	assert.equal(formatEvolutionInfo(chain), "", "Fresh chain should have empty evolution info");
+});
+
+test("formatEvolutionInfo shows clause version after mutation", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Test", undefined, ["A", "B", "C"]);
+	manager.updateSubGoalStatus(chain.id, "1", "complete", ["First learning"]);
+	manager.updateSubGoalStatus(chain.id, "2", "complete", ["Second learning"]);
+
+	// Complete third to trigger evolution
+	manager.updateSubGoalStatus(chain.id, "3", "complete", ["Third learning"]);
+
+	const evolution = formatEvolutionInfo(chain);
+	assert.ok(
+		evolution.includes(EVOLUTION_SYMBOLS.version) || evolution.includes(EVOLUTION_SYMBOLS.generation),
+		`Should show version or generation after mutation, got: ${evolution}`,
+	);
+});
+
+test("formatEvolutionInfo shows generation after mutation", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Evolution test", undefined, ["A", "B", "C"]);
+
+	// Complete first two with learnings to trigger evolution
+	manager.updateSubGoalStatus(chain.id, "1", "complete", ["First learning"]);
+	manager.updateSubGoalStatus(chain.id, "2", "complete", ["Second learning"]);
+
+	// Complete third to trigger another evolution
+	manager.updateSubGoalStatus(chain.id, "3", "complete", ["Third learning"]);
+
+	const evolution = formatEvolutionInfo(chain);
+	assert.ok(
+		evolution.includes(EVOLUTION_SYMBOLS.version) || evolution.includes(EVOLUTION_SYMBOLS.generation),
+		`Evolution info should show evolution symbols, got: ${evolution}`,
+	);
+});
+
+test("formatEvolutionInfo shows learnings count", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Learnings test", undefined, ["A", "B"]);
+
+	manager.updateSubGoalStatus(chain.id, "1", "complete", [
+		"Learning one",
+		"Learning two",
+	]);
+	manager.updateSubGoalStatus(chain.id, "2", "complete", [
+		"Learning three",
+	]);
+
+	const evolution = formatEvolutionInfo(chain);
+	assert.ok(evolution.includes(EVOLUTION_SYMBOLS.learnings), "Should show learnings symbol");
+	// 3 unique learnings
+	assert.ok(evolution.includes("3"), "Should show count of 3 learnings");
 });
