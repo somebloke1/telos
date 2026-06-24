@@ -570,7 +570,7 @@ async function handleGoalCommand(
 	if (!trimmed) {
 		if (!goal) {
 			ctx.ui.notify(
-				"No active goal. Usage: /goal <objective> | pause | resume | clear",
+				"No active goal. Usage: /goal <objective> | edit [--file] | pause | resume | clear",
 				"info",
 			);
 			return;
@@ -587,7 +587,7 @@ async function handleGoalCommand(
 	switch (command) {
 		case "help":
 			ctx.ui.notify(
-				"Usage: /goal <objective> | status | show | list | handoff | pause | resume | clear",
+				"Usage: /goal <objective> | edit [--file] | status | show | list | handoff | pause | resume | clear",
 				"info",
 			);
 			break;
@@ -654,6 +654,47 @@ async function handleGoalCommand(
 			ctx.ui.notify("Goal resumed; starting agent continuation", "info");
 			await goalContinuation.triggerNow(ctx);
 			break;
+
+		case "edit": {
+			if (!goal) {
+				ctx.ui.notify("No active goal to edit", "info");
+				return;
+			}
+
+			// Parse flags
+			const flags = remaining.split(/\s+/).filter((f) => f.startsWith("--"));
+			const useFileReference = flags.includes("--file") || flags.includes("--large");
+			const editorArg = remaining
+				.split(/\s+/)
+				.filter((f) => !f.startsWith("--"))
+				.join(" ") || process.env.EDITOR;
+
+			// Show current goal for context
+			const currentPreview = goal.objective.length > 200
+				? goal.objective.slice(0, 200) + "..."
+				: goal.objective;
+			ctx.ui.notify(
+				`Editing goal...\n\nCurrent: ${currentPreview}\n${useFileReference ? "Large mode: will write to GOAL.md if >4000 chars" : "Editing in place"}`,
+				"info",
+			);
+
+			try {
+				await goalManager.editGoal(editorArg, useFileReference);
+				await goalManager.persistToSession(pi);
+				renderGoalFooter(ctx, goalManager, goalChainManager);
+
+				const newGoal = goalManager.getGoal();
+				if (newGoal?.hasOwnProperty?.("hasFileReference") || newGoal?.objective?.startsWith("file:")) {
+					ctx.ui.notify(`Goal updated (file-based: ${newGoal.objective.slice(0, 60)}...)`, "info");
+				} else {
+					ctx.ui.notify("Goal updated", "info");
+				}
+			} catch (error: any) {
+				const message = error?.message || String(error);
+				ctx.ui.notify(`Goal edit failed: ${message}`, "error");
+			}
+			break;
+		}
 
 		default:
 			// Treat as objective

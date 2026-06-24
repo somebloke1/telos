@@ -5,6 +5,9 @@
  * Goals are thread-scoped and persisted through the session manager.
  */
 
+import { writeFileSync, readFileSync, unlinkSync, existsSync, mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { SessionManager } from "@earendil-works/pi-coding-agent";
 
 export type GoalStatus = "active" | "paused" | "blocked" | "complete" | "budget_limited";
@@ -21,6 +24,7 @@ export interface Goal {
 }
 
 const MAX_OBJECTIVE_CHARS = 4000;
+const FILE_OBJECTIVE_PREFIX = "file:";
 const TERMINAL_STATUSES: GoalStatus[] = ["complete", "blocked", "budget_limited"];
 
 /**
@@ -263,5 +267,167 @@ export class GoalManager {
 				? Math.max(0, this.goal.tokenBudget - this.goal.tokensUsed)
 				: undefined,
 		};
+	}
+
+	// ==================== Goal File Editing ====================
+
+	/**
+	 * Resolve a file reference in the objective.
+	 * If objective starts with "file:", returns the content of that file.
+	 * Otherwise returns the objective as-is.
+	 */
+	resolveFileReference(objective: string): string {
+		const trimmed = objective.trim();
+		if (trimmed.startsWith(FILE_OBJECTIVE_PREFIX) && trimmed.length > FILE_OBJECTIVE_PREFIX.length) {
+			const filePath = trimmed.slice(FILE_OBJECTIVE_PREFIX.length).trim();
+			return this.readGoalFile(filePath);
+		}
+		return trimmed;
+	}
+
+	/**
+	 * Check if the current goal has a file reference.
+	 */
+	hasFileReference(): boolean {
+		if (!this.goal) return false;
+		return this.goal.objective.trim().startsWith(FILE_OBJECTIVE_PREFIX);
+	}
+
+	/**
+	 * Get the file path if the current goal uses file reference.
+	 */
+	getFileReferencePath(): string | null {
+		if (!this.goal) return null;
+		const trimmed = this.goal.objective.trim();
+		if (trimmed.startsWith(FILE_OBJECTIVE_PREFIX) && trimmed.length > FILE_OBJECTIVE_PREFIX.length) {
+			return trimmed.slice(FILE_OBJECTIVE_PREFIX.length).trim();
+		}
+		return null;
+	}
+
+	/**
+	 * Read a goal file and return its content.
+	 */
+	readGoalFile(filePath: string): string {
+		if (!existsSync(filePath)) {
+			throw new Error(`Goal file not found: ${filePath}`);
+		}
+		return readFileSync(filePath, "utf-8").trim();
+	}
+
+	/**
+	 * Write objective content to a goal file.
+	 * Returns the file path.
+	 */
+	writeGoalFile(filePath: string, content: string): string {
+		const dir = filePath.split("/").slice(0, -1).join("/");
+		if (dir && !existsSync(dir)) {
+			mkdirSync(dir, { recursive: true });
+		}
+		writeFileSync(filePath, content, "utf-8");
+		return filePath;
+	}
+
+	/**
+	 * Write the current goal's objective to a temporary file for editing.
+	 * Returns the temp file path.
+	 */
+	writeGoalToTempFile(): string {
+		if (!this.goal) {
+			throw new Error("No goal exists to edit");
+		}
+		const tempPath = join(tmpdir(), `telos-goal-${this.goal.id}.md`);
+		writeFileSync(tempPath, this.goal.objective, "utf-8");
+		return tempPath;
+	}
+
+	/**
+	 * Read edited content from a file and save it as the new objective.
+	 * If content exceeds MAX_OBJECTIVE_CHARS, writes to GOAL.md and uses file reference.
+	 */
+	loadGoalFromFile(filePath: string, useFileReference: boolean): void {
+		if (!this.goal) {
+			throw new Error("No goal exists to update");
+		}
+
+		const content = this.readGoalFile(filePath);
+		if (!content) {
+			throw new Error("Goal file is empty");
+		}
+
+		if (useFileReference && content.length > MAX_OBJECTIVE_CHARS) {
+			// Write the content to GOAL.md and use file reference
+			const goalFilePath = join(process.cwd(), "GOAL.md");
+			this.writeGoalFile(goalFilePath, content);
+			this.goal.objective = `${FILE_OBJECTIVE_PREFIX}${goalFilePath}`;
+		} else {
+			this.goal.objective = content;
+		}
+
+		// Validate the objective
+		const trimmed = this.goal.objective.trim();
+		if (trimmed === FILE_OBJECTIVE_PREFIX || trimmed.startsWith(FILE_OBJECTIVE_PREFIX)) {
+			// It's a file reference — resolve to validate the actual content
+			const resolved = this.resolveFileReference(trimmed);
+			if (!resolved) {
+				throw new Error("File reference resolves to empty content");
+			}
+		} else if (!trimmed) {
+			throw new Error("Goal objective cannot be empty");
+		}
+
+		this.goal.updatedAt = Date.now();
+	}
+
+	/**
+	 * Open an editor for the current goal and update it with the edited content.
+	 * Returns the updated goal.
+	 * @param editor - Editor command to use (defaults to EDITOR env var or 'nano')
+	 * @param useFileReference - If true and content > 4000 chars, writes to GOAL.md
+	 */
+	async editGoal(editor?: string, useFileReference: boolean = false): Promise<Goal> {
+		if (!this.goal) {
+			throw new Error("No goal exists to edit");
+		}
+
+		const editorCmd = editor || process.env.EDITOR || "nano";
+		let tempFile: string | null = null;
+
+		try {
+			// Write current objective to temp file
+			tempFile = this.writeGoalToTempFile();
+
+			// Open the editor (use spawn to launch external editor)
+			const { spawn } = await import("node:child_process");
+			const [cmd, ...args] = editorCmd.split(/\s+/);
+
+			await new Promise<void>((resolve, reject) => {
+				const proc = spawn(cmd, [...args, tempFile!], {
+					stdio: "inherit",
+				});
+				proc.on("close", (code) => {
+					if (code === 0) {
+						resolve();
+					} else {
+						reject(new Error(`Editor exited with code ${code}`));
+					}
+				});
+				proc.on("error", reject);
+			});
+
+			// Load the edited content from the temp file
+			this.loadGoalFromFile(tempFile, useFileReference);
+
+			return this.goal;
+		} finally {
+			// Clean up temp file
+			if (tempFile) {
+				try {
+					unlinkSync(tempFile);
+				} catch {
+					// Ignore cleanup errors
+				}
+			}
+		}
 	}
 }
