@@ -30,7 +30,7 @@ const MAX_CHAIN_GOAL_CHARS = 30;
 const MAX_GOAL_PREVIEW_CHARS = 40;
 
 /** Status code mapping for compact display */
-const STATUS_CODES: Record<string, string> = {
+export const STATUS_CODES: Record<string, string> = {
 	active: "A",
 	paused: "P",
 	blocked: "B",
@@ -39,7 +39,7 @@ const STATUS_CODES: Record<string, string> = {
 };
 
 /** Chain status code for compact display */
-const CHAIN_STATUS_CODES: Record<string, string> = {
+export const CHAIN_STATUS_CODES: Record<string, string> = {
 	active: "⚡",
 	paused: "⏸",
 	complete: "✓",
@@ -49,7 +49,7 @@ const CHAIN_STATUS_CODES: Record<string, string> = {
 /**
  * Truncate text to a max length with ellipsis.
  */
-function truncate(value: string, maxLen: number): string {
+export function truncate(value: string, maxLen: number): string {
 	const cleaned = value.trim().replace(/\s+/g, " ");
 	return cleaned.length > maxLen ? `${cleaned.slice(0, maxLen - 1)}…` : cleaned;
 }
@@ -57,7 +57,7 @@ function truncate(value: string, maxLen: number): string {
 /**
  * Compute sub-goal progress string (e.g., "2/5 done", "0/5 active").
  */
-function formatSubGoalProgress(chain: GoalChain): string {
+export function formatSubGoalProgress(chain: GoalChain): string {
 	const total = chain.subGoals.length;
 	const completed = chain.subGoals.filter((sg) => sg.status === "complete").length;
 	const blocked = chain.subGoals.filter((sg) => sg.status === "blocked").length;
