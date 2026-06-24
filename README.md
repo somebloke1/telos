@@ -40,7 +40,10 @@ Telos adds persistent goal tracking to your Pi sessions. Goals help you stay foc
 - `/goalchain handoff [id]` - Start a fresh session with a compact chain continuity brief
 - `/goalchain list` - List all goal chains
 - `/goalchain show <id>` - View detailed information about a goal chain
+- `/goalchain add_sub_goal <id> <objective>` - Add a sub-goal to an existing chain
+- `/goalchain mutate <id>` - Prompt mutation guidance for the reproductive clause
 - `/goalchain infer <id>` - Infer sub-goals from record space
+- `/goalchain diagnose` - Show persistence diagnostics for troubleshooting
 - `/goalchain delete <id>` - Delete a goal chain
 
 #### LLM Tools
@@ -457,7 +460,10 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 /goalchain handoff [id]             Move active chain to a fresh session
 /goalchain list                     List all chains
 /goalchain show <id>                Show chain details
+/goalchain add_sub_goal <id> <objective>  Add a sub-goal
+/goalchain mutate <id>              Show mutation guidance
 /goalchain infer <id>               Infer sub-goals
+/goalchain diagnose                 Show persistence diagnostics
 /goalchain delete <id>              Delete chain
 ```
 

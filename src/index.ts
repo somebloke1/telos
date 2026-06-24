@@ -47,6 +47,9 @@ export default function (pi: ExtensionAPI) {
 		await goalManager.loadFromSession(ctx.sessionManager);
 		goalChainManager.loadFromSession(ctx.sessionManager);
 
+		// Restore the footer after reload so the status slot reflects current goal state.
+		renderGoalFooter(ctx, goalManager, goalChainManager);
+
 		// Check if there's an active goal that should continue
 		if (event.reason !== "startup") {
 			const goal = goalManager.getGoal();
@@ -180,19 +183,21 @@ export default function (pi: ExtensionAPI) {
 			const totalTokens = (promptTokens || 0) + (completionTokens || 0);
 			await goalManager.accountUsage(totalTokens);
 		}
+		// Refresh footer to reflect updated token usage
+		renderGoalFooter(ctx, goalManager, goalChainManager);
 	});
 
 	// Monitor for tool completion to update goal state
 	pi.on("tool_execution_end", async (event, ctx) => {
 		if (event.toolName === "create_goal" && !event.isError) {
 			goalContinuation.enableContinuation();
-			renderGoalFooter(ctx, goalManager);
+			renderGoalFooter(ctx, goalManager, goalChainManager);
 		}
 
 		if (event.toolName === "update_goal" && !event.isError) {
 			// Goal was just updated, check if we need to stop continuation
 			await goalContinuation.handleGoalUpdate(event, ctx);
-			renderGoalFooter(ctx, goalManager);
+			renderGoalFooter(ctx, goalManager, goalChainManager);
 		}
 	});
 
@@ -361,13 +366,14 @@ export default function (pi: ExtensionAPI) {
 			"Provide learnings to help the reproductive clause evolve intelligently",
 			"Learnings improve future sub-goals and primary goal mutations",
 			"Complete sub-goals may trigger chain evolution based on accumulated learnings",
+			"Sub-goal IDs can be either the full ID (e.g., 'subgoal-1') or a 1-based number (e.g., '1')",
 		],
 		parameters: Type.Object({
 			chain_id: Type.String({
 				description: "The ID of the goal chain",
 			}),
 			sub_goal_id: Type.String({
-				description: "The ID of the sub-goal to update",
+				description: "The ID of the sub-goal to update. Accepts either full ID (e.g., 'subgoal-1') or numeric position (1-based, e.g., '1').",
 			}),
 			status: StringEnum(["active", "complete", "blocked"] as const, {
 				description: "New status for the sub-goal",
@@ -611,6 +617,7 @@ async function handleGoalCommand(
 			goalManager.clearGoal();
 			await goalManager.persistToSession(pi);
 			goalContinuation.disableContinuation();
+			renderGoalFooter(ctx, goalManager, goalChainManager);
 			ctx.ui.notify("Goal cleared", "info");
 			break;
 
@@ -626,6 +633,7 @@ async function handleGoalCommand(
 			goalManager.updateGoalStatus("paused");
 			await goalManager.persistToSession(pi);
 			goalContinuation.disableContinuation();
+			renderGoalFooter(ctx, goalManager, goalChainManager);
 			ctx.ui.notify("Goal paused", "info");
 			break;
 
@@ -642,6 +650,7 @@ async function handleGoalCommand(
 			goalManager.updateGoalStatus("active");
 			await goalManager.persistToSession(pi);
 			goalContinuation.enableContinuation();
+			renderGoalFooter(ctx, goalManager, goalChainManager);
 			ctx.ui.notify("Goal resumed; starting agent continuation", "info");
 			await goalContinuation.triggerNow(ctx);
 			break;

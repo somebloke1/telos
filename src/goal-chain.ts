@@ -248,7 +248,9 @@ export class GoalChainManager {
 	}
 
 	/**
-	 * Update sub-goal status
+	 * Update sub-goal status. Accepts sub-goal IDs in either format:
+	 * - Full ID: "subgoal-1", "subgoal-2", etc.
+	 * - Numeric index: "1", "2", etc. (1-based position in the sub-goals list)
 	 */
 	updateSubGoalStatus(
 		chainId: string,
@@ -261,9 +263,16 @@ export class GoalChainManager {
 			throw new Error(`Goal chain ${chainId} not found`);
 		}
 
-		const subGoal = chain.subGoals.find((sg) => sg.id === subGoalId);
+		// Resolve numeric index to full sub-goal ID
+		const resolvedId = this.resolveSubGoalId(chain, subGoalId);
+		if (!resolvedId) {
+			const available = chain.subGoals.map((sg) => sg.id).join(", ");
+			throw new Error(`Sub-goal '${subGoalId}' not found in chain '${chainId}'. Available sub-goal IDs: ${available}`);
+		}
+
+		const subGoal = chain.subGoals.find((sg) => sg.id === resolvedId);
 		if (!subGoal) {
-			throw new Error(`Sub-goal ${subGoalId} not found`);
+			throw new Error(`Sub-goal ${resolvedId} not found`);
 		}
 
 		subGoal.status = status;
@@ -286,7 +295,7 @@ export class GoalChainManager {
 		this.addToRecordSpace(
 			chain,
 			recordType,
-			subGoalId,
+			resolvedId,
 			details,
 			status === "complete",
 			evolutionaryLearnings,
@@ -600,6 +609,26 @@ export class GoalChainManager {
 	}
 
 	/**
+	 * Resolve a sub-goal ID string to an internal sub-goal ID.
+	 * Accepts either the full ID ("subgoal-N") or a 1-based numeric index.
+	 */
+	private resolveSubGoalId(chain: GoalChain, inputId: string): string | null {
+		// Try full ID match first (e.g., "subgoal-1")
+		if (inputId.startsWith("subgoal-")) {
+			const found = chain.subGoals.find((sg) => sg.id === inputId);
+			if (found) return found.id;
+		}
+
+		// Try numeric index (1-based)
+		const numeric = Number.parseInt(inputId, 10);
+		if (Number.isFinite(numeric) && numeric >= 1 && numeric <= chain.subGoals.length) {
+			return chain.subGoals[numeric - 1].id;
+		}
+
+		return null;
+	}
+
+	/**
 	 * Get cached reproductive clause
 	 */
 	getCachedReproductiveClause(chainId: string): ReproductiveClause | null {
@@ -754,7 +783,7 @@ export class GoalChainManager {
 
 				const inferred = subGoal.inferredFromRecord ? " [inferred]" : "";
 				lines.push(
-					`  ${index + 1}. [${subGoal.status.toUpperCase()}]${inferred} Gen ${subGoal.generation} - ${toSafeText(
+					`  [${subGoal.id}] ${index + 1}. [${subGoal.status.toUpperCase()}]${inferred} Gen ${subGoal.generation} - ${toSafeText(
 						subGoal.objective,
 					)}`,
 				);

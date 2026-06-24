@@ -334,17 +334,103 @@ None directly - we use `pi.sendMessage()` and `pi.appendEntry()` instead
 - Extension API changes → May require updates
 - Event model changes → May require reimplementation
 
+## API Reference
+
+### Single Goal Commands (User)
+
+| Command | Description |
+|---------|-------------|
+| `/goal <objective>` | Create a new goal |
+| `/goal` | View current goal |
+| `/goal pause` | Pause goal (stops continuation) |
+| `/goal resume` | Resume paused goal |
+| `/goal clear` | Remove current goal |
+
+### Single Goal Tools (LLM)
+
+| Tool | Purpose |
+|------|---------|
+| `get_goal` | Retrieve goal, status, and token stats |
+| `create_goal` | Create goal (only when no unfinished goal exists) |
+| `update_goal` | Update goal to `complete` or `blocked` |
+
+### Goal Chain Commands (User)
+
+| Command | Description |
+|---------|-------------|
+| `/goalchain create <primary_goal>` | Create evolutionary chain |
+| `/goalchain continue [id]` | Trigger agent continuation |
+| `/goalchain handoff [id]` | Move chain to fresh session |
+| `/goalchain list` | List all chains |
+| `/goalchain show <id>` | Show chain details |
+| `/goalchain add_sub_goal <id> <objective>` | Add sub-goal |
+| `/goalchain infer <id>` | Infer sub-goals from record space |
+| `/goalchain diagnose` | Show persistence diagnostics |
+| `/goalchain delete <id>` | Delete chain |
+
+### Goal Chain Tools (LLM)
+
+| Tool | Purpose |
+|------|---------|
+| `get_goal_chain` | Retrieve chain, clause, sub-goals, record space |
+| `create_goal_chain` | Create chain with primary goal, principles, sub-goals |
+| `add_sub_goals` | Add sub-goals to existing chain |
+| `update_sub_goal_status` | Update sub-goal status with optional learnings |
+| `mutate_reproductive_clause` | Evolve clause based on accumulated learnings |
+| `infer_sub_goals` | Infer sub-goals from record space patterns |
+
+### Sub-Goal Status Transitions
+
+```
+pending → active → complete
+                → blocked
+```
+
+### Goal Status Transitions
+
+```
+active → paused → active
+       → complete (terminal)
+       → blocked  → active
+       → budget_limited → active / complete
+```
+
+## Recent Evolution
+
+### v0.1.1 (Footer Restoration)
+
+The TUI footer (`renderGoalFooter`) was updated to cover all goal state change paths:
+- Restored on `session_start` after session reload
+- Updated on `/goal clear`, `/goal pause`, `/goal resume`
+- Updated on `message_end` after token accounting
+- Already updated on `create_goal` and `update_goal` tool execution
+
+### v0.1.2 (Test Suite)
+
+- Installed `tsx` for TypeScript test execution
+- Created 16 unit tests for `GoalChainManager`
+- Created 8 integration tests covering full lifecycle, budgets, transitions, persistence
+- All 33 tests pass (16 new + 9 existing static analysis)
+- Fixed `mutateReproductiveClause` edge case with empty array fallback
+- Updated `package.json` test script to use tsx
+
+### v0.1.3 (Bug Fixes)
+
+- Fixed `addToRecordSpace` in `updateSubGoalStatus` to use `resolvedId` instead of raw `subGoalId`
+- Removed dead code `injectBudgetLimitSteering` and `injectObjectiveUpdatedSteering` from `goal-continuation.ts`
+- Removed stale comment "Audit completion requirement-by-requirement"
+- Added guard for `MIN_CONTINUATION_INTERVAL <= 0` to prevent thundering herd
+
+### v0.1.4 (Documentation)
+
+- Created `docs/goal-philosophy.md` — the Aristotelian reasoning behind intention→reality pipeline
+- Comprehensive API reference added to `docs/design.md`
+- Goal chain technical summary in `docs/goal-chain-technical-summary.md`
+
 ## References
 
 - [Codex Goal Feature Research](./research/codex_goal_feature_research.md)
+- [Goal Chain Technical Summary](./goal-chain-technical-summary.md)
+- [Goal Philosophy](./goal-philosophy.md)
 - [Pi Extensions Documentation](https://github.com/earendil-works/pi-mono/tree/main/packages/coding-agent/docs)
 - [OpenAI Codex Repository](https://github.com/openai/codex)
-
-## Changelog
-
-### v0.1.0 (Initial Design)
-
-- Core architecture defined
-- Data flows documented
-- Design decisions justified
-- Future enhancements planned

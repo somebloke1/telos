@@ -73,6 +73,11 @@ export class GoalContinuation {
 			return;
 		}
 
+		// Guard against zero or negative interval which would cause thundering herd.
+		if (this.MIN_CONTINUATION_INTERVAL <= 0) {
+			return;
+		}
+
 		const now = Date.now();
 		if (now - this.lastContinuationTime < this.MIN_CONTINUATION_INTERVAL) {
 			return;
@@ -130,7 +135,6 @@ export class GoalContinuation {
 			"- Preserve the full context and progress made so far.",
 			"- Work from evidence and files you've already examined.",
 			"- Keep your plan current as you discover new information.",
-			"- Audit completion requirement-by-requirement.",
 			"- Only call update_goal with status 'complete' when the goal is truly finished.",
 			"- Only call update_goal with status 'blocked' if you cannot proceed despite trying multiple approaches.",
 		];
@@ -164,43 +168,4 @@ export class GoalContinuation {
 		}
 	}
 
-	/**
-	 * Inject budget limit steering when budget is exhausted
-	 */
-	injectBudgetLimitSteering(goal: any, ctx: any): void {
-		const steeringMessage = [
-			"BUDGET LIMIT REACHED: The token budget for this goal has been exhausted.",
-			"",
-			"Instructions:",
-			"- Stop substantive new work on this goal.",
-			"- Summarize the progress made so far.",
-			"- List any remaining work that could not be completed.",
-			"- Do NOT call update_goal unless the goal is actually complete.",
-			"",
-			"The user may choose to resume with an increased budget or clear the goal.",
-		].join("\n");
-
-		this.pi.sendUserMessage(steeringMessage);
-	}
-
-	/**
-	 * Inject objective updated steering when user changes objective
-	 */
-	injectObjectiveUpdatedSteering(oldObjective: string, newObjective: string, ctx: any): void {
-		const steeringMessage = [
-			"OBJECTIVE UPDATED: The user has changed the goal objective.",
-			"",
-			`Previous objective: ${oldObjective}`,
-			"",
-			`New objective: ${newObjective}`,
-			"",
-			"Instructions:",
-			"- Pursue the NEW objective rather than continuing with stale work.",
-			"- Review what you've done so far and determine what's still relevant.",
-			"- Abandon work that no longer serves the new objective.",
-			"- Replan if necessary to align with the new objective.",
-		].join("\n");
-
-		this.pi.sendUserMessage(steeringMessage);
-	}
 }

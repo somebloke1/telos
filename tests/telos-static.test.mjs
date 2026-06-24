@@ -44,6 +44,16 @@ test("/goalchain handoff seeds replacement sessions with chain state and a conti
 	assert.match(source, /get_goal_chain with chain_id/);
 });
 
+test("README documents the implemented goalchain user commands", async () => {
+	const source = await readSource("src/index.ts");
+	const readme = await readSource("README.md");
+
+	for (const command of ["add_sub_goal", "mutate", "infer", "diagnose"]) {
+		assert.match(source, new RegExp(`case "${command}"`));
+		assert.match(readme, new RegExp(`/goalchain ${command}`));
+	}
+});
+
 test("GitHub maintenance workflow grants permissions required by its API calls", async () => {
 	const workflow = await readSource(".github/workflows/github-maintenance.yml");
 	const script = await readSource(".github/scripts/github-maintenance.mjs");
@@ -82,9 +92,13 @@ test("Goal TUI status integration composes with Pi footer APIs", async () => {
 	const indexSource = await readSource("src/index.ts");
 	const footerSource = await readSource("src/tui/footer.ts");
 
-	assert.match(indexSource, /renderGoalFooter\(ctx, goalManager\)/);
+	assert.match(indexSource, /renderGoalFooter\(ctx, goalManager, goalChainManager\)/);
 	assert.match(footerSource, /setStatus\?: \(key: string, value: string \| undefined\) => void/);
 	assert.match(footerSource, /const GOAL_STATUS_KEY = "telos-goal"/);
-	assert.match(footerSource, /setStatus\(GOAL_STATUS_KEY, undefined\)/);
+	// v0.3.0: enhanced footer with status codes, chain truncation, and sub-goal progress
+	assert.match(footerSource, /setStatus\(GOAL_STATUS_KEY, chainStatus \|\| undefined\)/);
+	assert.match(footerSource, /STATUS_CODES\[/);
+	assert.match(footerSource, /CHAIN_STATUS_CODES\[/);
+	assert.match(footerSource, /formatSubGoalProgress/);
 	assert.doesNotMatch(footerSource, /setFooter/);
 });
