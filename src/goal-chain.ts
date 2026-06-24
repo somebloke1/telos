@@ -645,23 +645,6 @@ export class GoalChainManager {
 	}
 
 	/**
-	 * Infer alternative objective for blocked goal
-	 */
-	private inferAlternativeObjective(blockedObjective: string, recordSpace: RecordSpaceEntry[]): string | null {
-		const recentLearning = recordSpace
-			.slice()
-			.reverse()
-			.find((entry) => entry.learnings && entry.learnings.length > 0)
-			?.learnings?.[0];
-
-		if (recentLearning) {
-			return `Rework blocked goal with recent learning in mind: ${blockedObjective}`;
-		}
-
-		return `Break down and retry blocked goal: ${blockedObjective}`;
-	}
-
-	/**
 	 * Resolve a sub-goal ID string to an internal sub-goal ID.
 	 * Accepts either the full ID ("subgoal-N") or a 1-based numeric index.
 	 */

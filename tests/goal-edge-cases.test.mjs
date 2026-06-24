@@ -340,3 +340,194 @@ test("GoalChainManager evolveChain with blocked goal and learnings triggers evol
 		`Clause version should be ≥2, got ${chain.reproductiveClause.version}`,
 	);
 });
+
+// ===================== buildInferenceContext & inferAlternativeObjective Tests =====================
+
+test("inferSubGoals with learnings produces inference from record space", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Develop a modular testing framework with comprehensive edge cases", undefined, [
+		"Design core architecture",
+		"Implement test runner",
+		"Add assertion library",
+		"Write documentation",
+	]);
+
+	// Complete all sub-goals with learnings to trigger inference
+	manager.updateSubGoalStatus(chain.id, "1", "complete", [
+		"Use dependency injection for test plugins",
+	]);
+	manager.updateSubGoalStatus(chain.id, "2", "complete", [
+		"Async test support is critical",
+	]);
+	manager.updateSubGoalStatus(chain.id, "3", "complete", [
+		"Snapshot testing adds value",
+	]);
+	manager.updateSubGoalStatus(chain.id, "4", "complete", [
+		"Auto-generate docs from code",
+	]);
+
+	// Should infer new sub-goals from record space, not keyword matching
+	const newSubGoals = manager.inferSubGoals(chain.id);
+	assert.ok(newSubGoals.length > 0, "Should infer sub-goals from record space");
+	// Inferred sub-goals should reference learnings from completed goals
+	const anyReferencedLearning = newSubGoals.some((sg) =>
+		sg.objective.toLowerCase().includes("plugin") ||
+		sg.objective.toLowerCase().includes("async") ||
+		sg.objective.toLowerCase().includes("snapshot") ||
+		sg.objective.toLowerCase().includes("auto") ||
+		sg.objective.toLowerCase().includes("modular"),
+	);
+	assert.ok(anyReferencedLearning || newSubGoals.length >= 2, "Inferred goals should reflect record space context");
+});
+
+test("inferAlternativeObjective produces alternatives for blocked goals", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Build a distributed cache system", undefined, [
+		"Design cache protocol",
+		"Implement node replication",
+	]);
+
+	// Complete first goal with learnings
+	manager.updateSubGoalStatus(chain.id, "1", "complete", [
+		"Redis protocol is well-established",
+		"Consider using msgpack for serialization",
+	]);
+	// Block second goal
+	manager.updateSubGoalStatus(chain.id, "2", "blocked", [
+		"Failed to implement custom protocol",
+	]);
+
+	// Get alternative objective for the blocked goal
+	const alternative = manager.inferAlternativeObjective(chain.subGoals[1], chain);
+	assert.ok(alternative, "Should produce alternative for blocked goal");
+	assert.ok(
+		alternative.includes("Redis") || alternative.includes("msgpack") || alternative.includes("protocol") || alternative.includes("learnings"),
+		`Alternative should reference learnings from completed goals, got: ${alternative}`,
+	);
+});
+
+test("inferSubGoals respects existing objectives and avoids duplication", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Implement a web framework", undefined, [
+		"Design routing system",
+		"Implement middleware",
+	]);
+
+	manager.updateSubGoalStatus(chain.id, "1", "complete", [
+		"Use pattern matching for routes",
+	]);
+	manager.updateSubGoalStatus(chain.id, "2", "complete", [
+		"Chain middleware in order",
+	]);
+
+	// First inference
+	manager.inferSubGoals(chain.id);
+
+	// Second inference should not duplicate
+	const secondInference = manager.inferSubGoals(chain.id);
+	const allObjectives = [...chain.subGoals, ...secondInference].map((sg) => sg.objective);
+	const uniqueObjectives = [...new Set(allObjectives)];
+	assert.equal(uniqueObjectives.length, allObjectives.length, "Should not duplicate existing objectives");
+});
+
+test("getActionableSummary returns correct structure", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Develop a modular testing framework", undefined, [
+		"Design architecture",
+		"Implement core",
+		"Add tests",
+	]);
+
+	manager.updateSubGoalStatus(chain.id, "1", "complete");
+	manager.updateSubGoalStatus(chain.id, "2", "active");
+	// "3" remains pending
+
+	const summary = manager.getActionableSummary(chain);
+
+	assert.equal(summary.id, chain.id, "Should return chain id");
+	assert.equal(summary.status, chain.status, "Should return chain status");
+	assert.equal(summary.primaryGoal, chain.primaryGoal, "Should return full primary goal");
+	assert.ok(summary.primaryGoalShort.length <= 40, "Short goal should be ≤40 chars");
+	assert.equal(summary.generation, chain.currentGeneration, "Should return generation");
+	assert.equal(summary.clauseVersion, chain.reproductiveClause.version, "Should return clause version");
+
+	assert.equal(summary.subGoalCounts.total, 3, "Should return total count");
+	assert.equal(summary.subGoalCounts.completed, 1, "Should return completed count");
+	assert.equal(summary.subGoalCounts.active, 1, "Should return active count");
+	assert.equal(summary.subGoalCounts.pending, 1, "Should return pending count");
+
+	assert.ok(summary.progressString.includes("1/3"), "Progress string should include completion ratio");
+	assert.ok(summary.progressString.includes("active"), "Progress string should include active count");
+
+	assert.equal(summary.actionableSubGoals.length, 2, "Should return 2 actionable sub-goals (active + pending)");
+
+	// Should include recent learnings from record space
+	assert.ok(Array.isArray(summary.recentLearnings), "Recent learnings should be an array");
+});
+
+test("getActionableSummary handles empty chain", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Empty chain goal", undefined, []);
+
+	const summary = manager.getActionableSummary(chain);
+
+	assert.equal(summary.subGoalCounts.total, 0, "Total should be 0");
+	assert.equal(summary.subGoalCounts.completed, 0, "Completed should be 0");
+	assert.equal(summary.actionableSubGoals.length, 0, "No actionable sub-goals");
+	assert.equal(summary.progressString, "", "Progress string should be empty for no sub-goals");
+});
+
+test("getActionableSummary handles all completed chain", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("All done", undefined, [
+		"First",
+		"Second",
+	]);
+
+	manager.updateSubGoalStatus(chain.id, "1", "complete", ["Learned something"]);
+	manager.updateSubGoalStatus(chain.id, "2", "complete", ["Learned more"]);
+
+	const summary = manager.getActionableSummary(chain);
+
+	assert.equal(summary.subGoalCounts.completed, 2, "Both completed");
+	assert.equal(summary.subGoalCounts.active, 0, "No active");
+	assert.equal(summary.subGoalCounts.pending, 0, "No pending");
+	assert.ok(summary.progressString.includes("2/2"), "Should show full completion");
+	assert.equal(summary.recentLearnings.length, 2, "Should have 2 recent learnings");
+});
+
+test("getActionableSummary includes inferred sub-goal counts", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Test with inference", undefined, [
+		"Step 1",
+		"Step 2",
+	]);
+
+	// Complete both sub-goals so inferSubGoals triggers (no actionable work)
+	manager.updateSubGoalStatus(chain.id, "1", "complete");
+	manager.updateSubGoalStatus(chain.id, "2", "complete");
+
+	// Infer to create an inferred sub-goal
+	manager.inferSubGoals(chain.id);
+
+	const summary = manager.getActionableSummary(chain);
+
+	assert.ok(summary.subGoalCounts.inferred >= 1, `Should have at least 1 inferred sub-goal, got ${summary.subGoalCounts.inferred}`);
+});
+
+test("buildInferenceContext includes reproductive clause in context", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Build a CLI tool", undefined, [
+		"Design command parser",
+	]);
+
+	manager.updateSubGoalStatus(chain.id, "1", "complete", [
+		"Use yargs for argument parsing",
+	]);
+
+	const subGoal = chain.subGoals[0];
+	const context = manager.buildInferenceContext(chain, subGoal);
+
+	assert.ok(context.includes("Build a CLI tool"), "Context should include primary goal");
+	assert.ok(context.includes("yargs"), "Context should include learning from completed goal");
+});
