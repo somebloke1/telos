@@ -36,6 +36,25 @@ export const EVOLUTION_SYMBOLS: Record<string, string> = {
 	learnings: "ℒ",
 };
 
+//** ANSI color codes for status highlighting */
+export const COLORS = {
+	reset: "\x1b[0m",
+	green: "\x1b[32m",
+	yellow: "\x1b[33m",
+	red: "\x1b[31m",
+	cyan: "\x1b[36m",
+	bright: "\x1b[1m",
+	gray: "\x1b[90m",
+} as const;
+
+/**
+ * Wrap text with ANSI color codes.
+ * Usage: colorize(text, COLORS.green) → "\x1b[32mtext\x1b[0m"
+ */
+export function colorize(text: string, color: string): string {
+	return `${color}${text}${COLORS.reset}`;
+}
+
 /** Status code mapping for compact display */
 export const STATUS_CODES: Record<string, string> = {
 	active: "A",
@@ -52,6 +71,44 @@ export const CHAIN_STATUS_CODES: Record<string, string> = {
 	complete: "✓",
 	evolving: "⟳",
 };
+
+/** Color mapping for goal statuses */
+export const STATUS_COLORS: Record<string, string> = {
+	active: COLORS.green,
+	paused: COLORS.yellow,
+	blocked: COLORS.red,
+	complete: COLORS.gray,
+	budget_limited: COLORS.cyan,
+};
+
+/** Color mapping for chain statuses */
+export const CHAIN_STATUS_COLORS: Record<string, string> = {
+	active: COLORS.green,
+	paused: COLORS.yellow,
+	complete: COLORS.gray,
+	evolving: COLORS.cyan,
+};
+
+/**
+ * Get color for a status string.
+ */
+export function getStatusColor(status: string, map: Record<string, string>): string {
+	return map[status] ?? COLORS.bright;
+}
+
+/**
+ * Build a colorized status code: [A] → "\x1b[32m[A]\x1b[0m"
+ */
+export function colorizeStatus(char: string, status: string, map: Record<string, string>): string {
+	return colorize(`[${char}]`, getStatusColor(status, map));
+}
+
+/**
+ * Build a colorized chain status code: ⚡ → "\x1b[32m⚡\x1b[0m"
+ */
+export function colorizeChainStatus(char: string, status: string): string {
+	return colorize(char, getStatusColor(status, CHAIN_STATUS_COLORS));
+}
 
 /**
  * Truncate text to a max length with ellipsis.
@@ -132,11 +189,12 @@ export function renderGoalFooter(
 		if (allChains.length > 0) {
 			const latestChain = allChains.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
 			const chainCode = CHAIN_STATUS_CODES[latestChain.status] ?? "·";
+			const colorizedChainCode = colorizeChainStatus(chainCode, latestChain.status);
 			const truncatedGoal = truncate(latestChain.primaryGoal, MAX_CHAIN_GOAL_CHARS);
 			const progress = formatSubGoalProgress(latestChain);
 			const evolution = formatEvolutionInfo(latestChain);
 			const evolutionInfo = evolution ? ` [${evolution}]` : "";
-			chainStatus = `${chainCode} ${truncatedGoal}${evolutionInfo} [${progress}]`;
+			chainStatus = `${colorizedChainCode} ${truncatedGoal}${evolutionInfo} [${progress}]`;
 		}
 	}
 
@@ -147,12 +205,13 @@ export function renderGoalFooter(
 	}
 
 	const statusChar = STATUS_CODES[goal.status] ?? "?";
+	const colorizedStatus = colorizeStatus(statusChar, goal.status, STATUS_COLORS);
 	const preview = truncate(goal.objective, MAX_GOAL_PREVIEW_CHARS);
 	const budgetInfo = goal.tokenBudget ? ` [${goal.tokensUsed ?? 0}/${goal.tokenBudget}]` : "";
 
 	setStatus(
 		GOAL_STATUS_KEY,
-		`[${statusChar}] ${preview}${budgetInfo}  |  ${chainStatus || "no chain"}`,
+		`${colorizedStatus} ${preview}${budgetInfo}  |  ${chainStatus || "no chain"}`,
 	);
 }
 

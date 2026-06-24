@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { GoalChainManager } from "../src/goal-chain.js";
-import { truncate, formatSubGoalProgress, formatEvolutionInfo, renderChainWidget, STATUS_CODES, CHAIN_STATUS_CODES, EVOLUTION_SYMBOLS } from "../src/tui/footer.js";
+import { truncate, formatSubGoalProgress, formatEvolutionInfo, renderChainWidget, STATUS_CODES, CHAIN_STATUS_CODES, EVOLUTION_SYMBOLS, COLORS, colorize, colorizeStatus, colorizeChainStatus, getStatusColor, STATUS_COLORS, CHAIN_STATUS_COLORS } from "../src/tui/footer.js";
 
 // ===================== truncate tests =====================
 
@@ -287,4 +287,67 @@ test("renderChainWidget truncates long objectives", () => {
 	assert.ok(primaryLine.length <= 42, "Primary goal line should be truncated");
 	// Learning should be truncated (max 40 chars)
 	assert.ok(received.value.includes("ℒ:"), "Should have learnings section");
+});
+
+// ===================== Colorization Tests =====================
+
+test("COLORS has all expected ANSI codes", () => {
+	assert.ok(COLORS.reset.startsWith("\x1b"));
+	assert.ok(COLORS.green.startsWith("\x1b"));
+	assert.ok(COLORS.yellow.startsWith("\x1b"));
+	assert.ok(COLORS.red.startsWith("\x1b"));
+	assert.ok(COLORS.cyan.startsWith("\x1b"));
+});
+
+test("colorize wraps text with ANSI codes", () => {
+	const result = colorize("hello", COLORS.green);
+	assert.ok(result.startsWith("\x1b[32m"), "Should start with green ANSI code");
+	assert.ok(result.endsWith("\x1b[0m"), "Should end with reset ANSI code");
+	assert.ok(result.includes("hello"), "Should contain original text");
+});
+
+test("colorizeStatus applies correct color for active", () => {
+	const result = colorizeStatus("A", "active", STATUS_COLORS);
+	assert.ok(result.includes("\x1b[32m"), "Active should be green");
+	assert.ok(result.includes("[A]"), "Should contain status code");
+});
+
+test("colorizeStatus applies correct color for blocked", () => {
+	const result = colorizeStatus("B", "blocked", STATUS_COLORS);
+	assert.ok(result.includes("\x1b[31m"), "Blocked should be red");
+});
+
+test("colorizeStatus applies correct color for complete", () => {
+	const result = colorizeStatus("✓", "complete", STATUS_COLORS);
+	assert.ok(result.includes("\x1b[90m"), "Complete should be gray");
+});
+
+test("colorizeChainStatus applies correct color for active", () => {
+	const result = colorizeChainStatus("⚡", "active");
+	assert.ok(result.includes("\x1b[32m"), "Active chain should be green");
+});
+
+test("colorizeChainStatus applies correct color for evolving", () => {
+	const result = colorizeChainStatus("⟳", "evolving");
+	assert.ok(result.includes("\x1b[36m"), "Evolving chain should be cyan");
+});
+
+test("getStatusColor falls back to bright for unknown status", () => {
+	const result = getStatusColor("unknown", STATUS_COLORS);
+	assert.equal(result, COLORS.bright, "Unknown status should use bright color");
+});
+
+test("STATUS_COLORS maps all goal statuses", () => {
+	assert.equal(STATUS_COLORS.active, COLORS.green);
+	assert.equal(STATUS_COLORS.paused, COLORS.yellow);
+	assert.equal(STATUS_COLORS.blocked, COLORS.red);
+	assert.equal(STATUS_COLORS.complete, COLORS.gray);
+	assert.equal(STATUS_COLORS.budget_limited, COLORS.cyan);
+});
+
+test("CHAIN_STATUS_COLORS maps all chain statuses", () => {
+	assert.equal(CHAIN_STATUS_COLORS.active, COLORS.green);
+	assert.equal(CHAIN_STATUS_COLORS.paused, COLORS.yellow);
+	assert.equal(CHAIN_STATUS_COLORS.complete, COLORS.gray);
+	assert.equal(CHAIN_STATUS_COLORS.evolving, COLORS.cyan);
 });
