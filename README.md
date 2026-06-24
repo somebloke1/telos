@@ -24,6 +24,7 @@ Telos adds persistent goal tracking to your Pi sessions. Goals help you stay foc
 - `/goal pause` - Pause the current goal (stops automatic continuation)
 - `/goal resume` - Resume a paused goal
 - `/goal clear` - Remove the current goal
+- `/goal edit` - Open an editor to modify the current goal (large objectives stored transparently)
 
 #### LLM Tools
 
@@ -145,6 +146,82 @@ pi
 - `/goal` and `/goalchain` may not appear in slash command menu (Pi 0.78.0 limitation)
 - All commands are fully functional when typed
 - See [INSTALLATION.md](INSTALLATION.md) for detailed instructions
+
+## TUI Integration
+
+Telos integrates with Pi's TUI to provide real-time goal and goal chain status visualization in the footer.
+
+### Goal Status Footer
+
+The goal footer displays the current goal status using compact colorized codes:
+
+| Status | Code | Color | Description |
+|--------|------|-------|-------------|
+| active | [A] | Green | Goal is active, continuation enabled |
+| paused | [P] | Yellow | Goal is paused, no continuation |
+| blocked | [B] | Red | Goal is blocked |
+| complete | ✓ | Cyan | Goal completed |
+| budget_limited | ⌀ | Gray | Budget exhausted |
+
+### Goal Chain Widget
+
+When a goal chain is active, a rich chain widget appears in the footer showing:
+
+```
+╔══════════════════════════════════════════════╗
+║ Chain: Continue methodical incremental ...   ║
+║ Sub-goals: 10/20 done · 5 active             ║
+║ ⊕3 g12 ℒ47  [A]                              ║
+║ → Design system architecture                  ║
+║ → Implement core modules                      ║
+║ Recent: "TypeScript compilation works well"   ║
+╚══════════════════════════════════════════════╝
+```
+
+**Evolution Symbols:**
+
+| Symbol | Meaning | Example |
+|--------|---------|----------|
+| ⊕N | Clause version | ⊕3 = reproductive clause v3 |
+| gN | Generation | g12 = generation 12 |
+| ℒN | Learnings count | ℒ47 = 47 accumulated learnings |
+
+**Sub-Goal Progress:**
+
+```
+Sub-goal breakdown:
+  ✓ 10 done · 5 active · 3 blocked · 2 pending
+```
+
+Each sub-goal displays its status code alongside progress information.
+
+**Actionable Sub-Goals:**
+
+When sub-goals are not yet complete, the widget shows the next actionable sub-goals (up to 2):
+```
+→ Design system architecture
+→ Implement core modules
+```
+
+**Learnings Preview:**
+
+Recent learnings from completed sub-goals are shown as a preview (truncated at 80 chars):
+```
+Recent: "TypeScript compilation works well" "Multi-tenant design needed"
+```
+
+### Colorized Status Integration
+
+The TUI uses ANSI color codes for status display:
+
+- **Green** for active states
+- **Yellow** for paused/warnings
+- **Red** for blocked/error states
+- **Cyan** for completed states
+- **Bright** for unknown statuses (fallback)
+- **Gray** for budget-limited
+
+Colors are applied consistently across goal status, chain status, and sub-goal status displays.
 
 ## Usage
 
@@ -451,6 +528,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 /goal pause            Pause goal
 /goal resume           Resume goal  
 /goal clear            Clear goal
+/goal edit             Edit current goal in editor
 ```
 
 ### Goal Chains
