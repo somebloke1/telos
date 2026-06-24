@@ -7,23 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Added (v0.2.0 - In Development)
-- **Goal Chains**: Evolutionary goal management with reproductive clauses
-- `/goalchain` command for creating and managing goal chains
-- Goal chain LLM tools: get_goal_chain, create_goal_chain, add_sub_goals, update_sub_goal_status, mutate_reproductive_clause, infer_sub_goals
-- Record space for accumulating learnings and evolutionary history
-- Conservative mutation of primary goals across generations
-- Sub-goal inference from record space patterns
-- Deterministic caching for reproductive clause (lifeline)
-- Multi-generational goal evolution
+### Added (v0.3.0 - In Development)
+- **TUI Footer Enhancements** (`src/tui/footer.ts`)
+  - Status codes for goals: `[A]` active, `[P]` paused, `[B]` blocked, `[✓]` complete, `[⌀]` budget_limited
+  - Chain status codes: `⚡` active, `⏸` paused, `✓` complete, `⟳` evolving
+  - Truncated chain primary goals (30 char max) to avoid dominating footer
+  - Sub-goal progress indicator (e.g., `"2/5 done · 1 active"`)
+  - Generation tracking display for goal chains
+  - Cleaner dual-bar layout: `[A] objective[budget]  |  ⚡ chain [progress]`
+- **Expanded Test Suite**
+  - 59 tests total (up from 33)
+  - New edge case tests for GoalManager: empty/long objectives, budget validation, terminal states
+  - New edge case tests for GoalChainManager: principle dedup, caps, evolution thresholds, format archiving
+  - Static analysis tests for source code structure verification
+- **Bug Fixes**
+  - Fixed `addToRecordSpace` to use `resolvedId` instead of raw `subGoalId`
+  - Removed dead code (`injectBudgetLimitSteering`, `injectObjectiveUpdatedSteering`)
+  - Added `MIN_CONTINUATION_INTERVAL <= 0` guard against thundering herd
+  - Removed stale completion-audit comment from continuation messages
 
-### Planned (Future)
-- TUI integration (goal status in footer, widgets)
+### Planned (v0.4.0)
 - `/goal edit` command for modifying objectives
 - Goal file support for >4000 char objectives
 - Goal templates and presets
 - Enhanced continuation strategies
 - Goal analytics and reporting
+- Goal Chain Widget (advanced TUI display)
+- Evolution Visualization in TUI
 
 ## [0.1.0] - 2026-06-23
 
@@ -73,6 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[Unreleased]: https://github.com/somebloke1/telos/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/somebloke1/telos/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/somebloke1/telos/releases/tag/v0.2.0
 [0.1.0]: https://github.com/somebloke1/telos/releases/tag/v0.1.0
 [0.0.1]: https://github.com/somebloke1/telos/releases/tag/v0.0.1
