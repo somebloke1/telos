@@ -1,0 +1,82 @@
+name: Auto-update CHANGELOG
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update-changelog:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Update CHANGELOG.md
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the latest tag or use "HEAD" as starting point
+          LATEST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+          if [ -n "$LATEST_TAG" ]; then
+            # Compare against latest tag
+            COMMITS=$(git log "$LATEST_TAG"..HEAD --pretty=format:"- %s" --no-merges)
+          else
+            # No tag exists yet, use all commits
+            COMMITS=$(git log --pretty=format:"- %s" --no-merges | head -50)
+          fi
+
+          if [ -z "$COMMITS" ]; then
+            echo "No new commits to document"
+            exit 0
+          fi
+
+          # Determine version and date
+          VERSION="v0.3.0"
+          DATE=$(date +%Y-%m-%d)
+
+          # Check if CHANGELOG already has this version section
+          if grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+            # Prepend commits to existing version section
+            echo "$COMMITS" | while read -r line; do
+              sed -i "s/^## \[$VERSION\]/## \[$VERSION\]\n$line/" CHANGELOG.md
+            done
+          else
+            # Add new version section after unreleased
+            NEW_SECTION="## [$VERSION] - $DATE
+
+### Changes
+$COMMITS
+
+"
+            if grep -q "## \[Unreleased\]" CHANGELOG.md; then
+              sed -i "/## \[Unreleased\]/a\\
+$NEW_SECTION" CHANGELOG.md
+            else
+              echo "" >> CHANGELOG.md
+              echo "$NEW_SECTION" >> CHANGELOG.md
+            fi
+          fi
+
+          # Commit if changed
+          if git diff --quiet CHANGELOG.md; then
+            echo "CHANGELOG.md unchanged"
+          else
+            git add CHANGELOG.md
+            git commit -m "chore: update CHANGELOG.md with latest changes" || echo "No changes to commit"
+            git push || echo "Push failed (may need token with write access)"
+          fi
