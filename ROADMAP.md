@@ -53,23 +53,27 @@ This document outlines the planned development roadmap for Telos.
 ## Version 0.3.0 - TUI Integration
 
 ### Priority 1 Features
-- [ ] **Goal Status in TUI Footer**
-  - Show current goal status (active/paused/etc.)
-  - Display objective preview (truncated if long)
-  - Show token budget progress bar
-  - Click to view full goal details
+- [x] **Goal Status in TUI Footer** (v0.3.0-alpha)
+  - Compact status codes: `[A]` active, `[P]` paused, `[B]` blocked, `[✓]` complete, `[⌀]` budget_limited
+  - Chain status codes: `⚡` active, `⏸` paused, `✓` complete, `⟳` evolving
+  - Truncated chain primary goals (30 char max) to prevent footer domination
+  - Sub-goal progress indicator: e.g., `"2/5 done · 1 active"`
+  - Generation tracking display for multi-gen chains
+  - Clean dual-bar layout: `[A] objective[budget]  |  ⚡ chain [progress]`
+  - Helper functions exported for testability: `truncate`, `formatSubGoalProgress`, `STATUS_CODES`, `CHAIN_STATUS_CODES`
+  - 15 unit tests for footer helpers (74 total test suite)
 
 - [ ] **Goal Chain Widget**
-  - Display active goal chain status
-  - Show primary goal and generation
-  - Sub-goal progress visualization
-  - Quick access to chain details
+  - Display active goal chain status with rich detail
+  - Show primary goal and generation in a dedicated widget
+  - Sub-goal progress visualization (not just count)
+  - Quick access to chain details via click/hover
 
 - [ ] **Evolution Visualization**
-  - Show reproductive clause version
-  - Display learnings count
-  - Mutation history timeline
+  - Show reproductive clause version with mutation history
+  - Display learnings count and key learnings
   - Generation progression indicator
+  - Visual timeline of chain evolution
 
 - [ ] **Enhanced Goal Display**
   - Syntax highlighting for objectives
@@ -250,7 +254,7 @@ This document outlines the planned development roadmap for Telos.
 |---------|---------------|--------|
 | 0.1.0 | 2026-06-23 | ✅ Released |
 | 0.2.0 | 2026-06-23 | ✅ Released |
-| 0.3.0 | TBD | 📋 Planned |
+| 0.3.0 | 2026-06-24 | 🚧 In Progress (TUI footer complete, widget & evolution pending) |
 | 0.4.0 | TBD | 📋 Planned |
 | 0.5.0 | TBD | 📋 Planned |
 | 0.6.0 | TBD | 📋 Planned |
@@ -302,6 +306,6 @@ Your feedback helps us prioritize! Join the discussion in GitHub issues.
 
 ---
 
-**Last Updated**: 2026-06-23
-**Current Version**: 0.2.0
-**Next Version**: 0.3.0 (Planning)
+**Last Updated**: 2026-06-24
+**Current Version**: 0.3.0-alpha
+**Next Version**: 0.3.0 (Goal Chain Widget, Evolution Visualization)
