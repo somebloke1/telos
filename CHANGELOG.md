@@ -14,17 +14,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Truncated chain primary goals (30 char max) to avoid dominating footer
   - Sub-goal progress indicator (e.g., `"2/5 done · 1 active"`)
   - Generation tracking display for goal chains
+  - Evolution visualization: ⊕N (clause version), gN (generation), ℒN (learnings count)
   - Cleaner dual-bar layout: `[A] objective[budget]  |  ⚡ chain [progress]`
+  - Helper functions exported for testability: `truncate`, `formatSubGoalProgress`, `formatEvolutionInfo`, `STATUS_CODES`, `CHAIN_STATUS_CODES`, `EVOLUTION_SYMBOLS`
+- **Record Space Mining for Inference** (`src/goal-chain.ts`)
+  - Replaced brittle keyword/regex matching with record space mining
+  - `buildInferenceContext()` gathers reproductive clause, sub-goal status breakdown, completed/blocked goals with learnings, pending/active goals, and recent record entries
+  - LLM receives structured historical context for genuine reasoning
+  - Removed dead code: `inferNextStepsFromPrimaryGoal`, `inferIntermediateSteps`, `truncateText` (47 lines)
+- **Goal Chain Manager Improvements** (`src/goal-chain.ts`)
+  - `getActionableSummary(chain)`: structured summary for TUI widget display including chain id, status, generation, clause version, truncated goal, sub-goal breakdown, progress string, recent learnings, and actionable sub-goals
+  - Refactored `inferAlternativeObjective` to use SubGoal+chain signature instead of string+recordSpace
+- **GitHub Workflows**
+  - Auto CHANGELOG update workflow (`.github/workflows/changelog-update.yml`)
+  - Detects latest tag, extracts commits, appends to version section
+  - Idempotent: skips if no changes detected
 - **Expanded Test Suite**
-  - 59 tests total (up from 33)
-  - New edge case tests for GoalManager: empty/long objectives, budget validation, terminal states
-  - New edge case tests for GoalChainManager: principle dedup, caps, evolution thresholds, format archiving
+  - 86 tests total (up from 59)
+  - New inference tests: record space mining, alternative objectives, deduplication
+  - New actionable summary tests: full chain, empty chain, inferred sub-goals
+  - New evolution visualization tests: clause version, generation, learnings count
   - Static analysis tests for source code structure verification
+- **Documentation**
+  - ROADMAP.md updated: v0.3.0-alpha progress documented
+  - Version timeline updated to reflect current state
 - **Bug Fixes**
   - Fixed `addToRecordSpace` to use `resolvedId` instead of raw `subGoalId`
   - Removed dead code (`injectBudgetLimitSteering`, `injectObjectiveUpdatedSteering`)
   - Added `MIN_CONTINUATION_INTERVAL <= 0` guard against thundering herd
   - Removed stale completion-audit comment from continuation messages
+  - Removed duplicate `inferAlternativeObjective` method signature
 
 ### Planned (v0.4.0)
 - `/goal edit` command for modifying objectives
