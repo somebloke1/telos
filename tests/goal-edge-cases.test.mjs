@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { GoalChainManager } from "../src/goal-chain.js";
 import { GoalManager } from "../src/goal-manager.js";
 
@@ -11,14 +13,14 @@ test("GoalManager rejects empty objective", () => {
 	assert.throws(() => gm.createGoal("   "), /cannot be empty/);
 });
 
-test("GoalManager rejects objective exceeding max length", () => {
+test("GoalManager stores large objectives transparently in GOAL.md", () => {
 	const gm = new GoalManager();
 	const tooLong = "a".repeat(4001);
-	assert.throws(() => gm.createGoal(tooLong), /exceeds maximum length/);
-	// Boundary: exactly 4000 should work
-	const exact = "a".repeat(4000);
-	const goal = gm.createGoal(exact);
-	assert.equal(goal.objective.length, 4000);
+	// Large objectives are stored transparently (not rejected)
+	const goal = gm.createGoal(tooLong);
+	assert.ok(goal.objective.startsWith("file:"), "Large objective should be stored as file reference");
+	assert.ok(existsSync(join(process.cwd(), "GOAL.md")), "GOAL.md should be created");
+	assert.ok(goal.objective.length > 30, `file reference should be >30 chars, got ${goal.objective.length}`);
 });
 
 test("GoalManager.updateObjective trims whitespace", () => {

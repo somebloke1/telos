@@ -138,7 +138,7 @@ describe("GoalManager - temp file editing", () => {
 		manager.createGoal("original objective");
 		const filePath = join(tempDir, "load-test.md");
 		writeFileSync(filePath, "new content from file");
-		manager.loadGoalFromFile(filePath, false);
+		manager.loadGoalFromFile(filePath);
 		assert.equal(manager.getGoal().objective, "new content from file");
 	});
 
@@ -148,7 +148,7 @@ describe("GoalManager - temp file editing", () => {
 		const filePath = join(tempDir, "empty-test.md");
 		writeFileSync(filePath, "");
 		assert.throws(() => {
-			manager.loadGoalFromFile(filePath, false);
+			manager.loadGoalFromFile(filePath);
 		}, /empty/);
 	});
 
@@ -158,7 +158,7 @@ describe("GoalManager - temp file editing", () => {
 		const filePath = join(tempDir, "long-content.md");
 		const longContent = "a".repeat(4001);
 		writeFileSync(filePath, longContent);
-		manager.loadGoalFromFile(filePath, true);
+		manager.loadGoalFromFile(filePath);
 		const goal = manager.getGoal();
 		assert.ok(goal.objective.startsWith("file:"), "Should be file reference");
 		assert.ok(existsSync(join(process.cwd(), "GOAL.md")), "Should create GOAL.md");
@@ -166,12 +166,12 @@ describe("GoalManager - temp file editing", () => {
 		try { unlinkSync(join(process.cwd(), "GOAL.md")); } catch {}
 	});
 
-	test("loadGoalFromFile keeps small content as plain text even with useFileReference", () => {
+	test("loadGoalFromFile stores large content as file reference automatically", () => {
 		const manager = new GoalManager();
 		manager.createGoal("short");
 		const filePath = join(tempDir, "small-content.md");
 		writeFileSync(filePath, "small content");
-		manager.loadGoalFromFile(filePath, true);
+		manager.loadGoalFromFile(filePath);
 		const goal = manager.getGoal();
 		assert.equal(goal.objective, "small content", "Should keep as plain text when <4000 chars");
 	});
@@ -199,7 +199,7 @@ describe("GoalManager - editGoal async method", () => {
 		const tempPath2 = join(tempDir, "edit-temp.md");
 		writeFileSync(tempPath2, "edited via file");
 
-		manager.loadGoalFromFile(tempPath2, false);
+		manager.loadGoalFromFile(tempPath2);
 		assert.equal(manager.getGoal().objective, "edited via file");
 	});
 });
@@ -217,7 +217,7 @@ describe("GoalManager - integration: edit workflow", () => {
 		assert.equal(readFileSync(tempPath, "utf-8"), "initial objective");
 		unlinkSync(tempPath);
 
-		manager.loadGoalFromFile(editFile, false);
+		manager.loadGoalFromFile(editFile);
 		assert.equal(manager.getGoal().objective, "edited via workflow");
 	});
 
@@ -229,7 +229,7 @@ describe("GoalManager - integration: edit workflow", () => {
 		const longContent = "x".repeat(5000);
 		writeFileSync(longFilePath, longContent);
 
-		manager.loadGoalFromFile(longFilePath, true);
+		manager.loadGoalFromFile(longFilePath);
 		const goal = manager.getGoal();
 		assert.ok(goal.objective.startsWith("file:"), "Should use file reference for large content");
 		assert.ok(goal.objective.includes("GOAL.md"), "Should reference GOAL.md");
@@ -246,7 +246,7 @@ describe("GoalManager - integration: edit workflow", () => {
 		writeFileSync(editFile, "updated objective");
 
 		const before = Date.now();
-		manager.loadGoalFromFile(editFile, false);
+		manager.loadGoalFromFile(editFile);
 		const after = Date.now();
 
 		const goal = manager.getGoal();

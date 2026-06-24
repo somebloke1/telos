@@ -570,7 +570,7 @@ async function handleGoalCommand(
 	if (!trimmed) {
 		if (!goal) {
 			ctx.ui.notify(
-				"No active goal. Usage: /goal <objective> | edit [--file] | pause | resume | clear",
+				"No active goal. Usage: /goal <objective> | edit | pause | resume | clear",
 				"info",
 			);
 			return;
@@ -599,7 +599,9 @@ async function handleGoalCommand(
 				ctx.ui.notify("No active goal. Usage: /goal <objective>", "info");
 				return;
 			}
-			showGoalStatus(goal, ctx);
+			// Resolve file references transparently
+			const resolved = goalManager.resolveFileReference(goal.objective);
+			showGoalStatus({ ...goal, objective: resolved }, ctx);
 			break;
 
 		case "handoff":
@@ -661,34 +663,17 @@ async function handleGoalCommand(
 				return;
 			}
 
-			// Parse flags
-			const flags = remaining.split(/\s+/).filter((f) => f.startsWith("--"));
-			const useFileReference = flags.includes("--file") || flags.includes("--large");
-			const editorArg = remaining
-				.split(/\s+/)
-				.filter((f) => !f.startsWith("--"))
-				.join(" ") || process.env.EDITOR;
+			const editorArg = remaining || process.env.EDITOR;
 
-			// Show current goal for context
-			const currentPreview = goal.objective.length > 200
-				? goal.objective.slice(0, 200) + "..."
-				: goal.objective;
-			ctx.ui.notify(
-				`Editing goal...\n\nCurrent: ${currentPreview}\n${useFileReference ? "Large mode: will write to GOAL.md if >4000 chars" : "Editing in place"}`,
-				"info",
-			);
+			// Show current goal for context (resolve any file reference transparently)
+			const currentPreview = goalManager.resolveFileReference(goal.objective).slice(0, 200);
+			ctx.ui.notify(`Editing goal...\n\nCurrent: ${currentPreview}${goalManager.resolveFileReference(goal.objective).length > 200 ? "..." : ""}`);
 
 			try {
-				await goalManager.editGoal(editorArg, useFileReference);
+				await goalManager.editGoal(editorArg);
 				await goalManager.persistToSession(pi);
 				renderGoalFooter(ctx, goalManager, goalChainManager);
-
-				const newGoal = goalManager.getGoal();
-				if (newGoal?.hasOwnProperty?.("hasFileReference") || newGoal?.objective?.startsWith("file:")) {
-					ctx.ui.notify(`Goal updated (file-based: ${newGoal.objective.slice(0, 60)}...)`, "info");
-				} else {
-					ctx.ui.notify("Goal updated", "info");
-				}
+				ctx.ui.notify("Goal updated", "info");
 			} catch (error: any) {
 				const message = error?.message || String(error);
 				ctx.ui.notify(`Goal edit failed: ${message}`, "error");
@@ -697,15 +682,8 @@ async function handleGoalCommand(
 		}
 
 		default:
-			// Treat as objective
+			// Treat as objective (system handles large objectives transparently)
 			const objective = trimmed;
-			if (objective.length > 4000) {
-				ctx.ui.notify(
-					"Objective too long (max 4000 characters). Put detailed instructions in a file and reference it from the goal.",
-					"error",
-				);
-				return;
-			}
 
 			if (goal && goal.status !== "complete") {
 				// Confirm before replacing non-complete goal

@@ -35,18 +35,14 @@ export class GoalManager {
 	private nextGoalId = 1;
 
 	/**
-	 * Create a new goal
+	 * Create a new goal.
+	 * Large objectives (>4000 chars) are stored transparently in GOAL.md.
 	 */
 	createGoal(objective: string, tokenBudget?: number): Goal {
 		// Validate objective
 		const trimmedObjective = objective.trim();
 		if (!trimmedObjective) {
 			throw new Error("Goal objective cannot be empty");
-		}
-		if (trimmedObjective.length > MAX_OBJECTIVE_CHARS) {
-			throw new Error(
-				`Goal objective exceeds maximum length of ${MAX_OBJECTIVE_CHARS} characters`,
-			);
 		}
 
 		// Check for existing incomplete goal
@@ -56,10 +52,13 @@ export class GoalManager {
 			);
 		}
 
+		// Handle large objectives transparently
+		const storedObjective = this.storeObjective(trimmedObjective);
+
 		const now = Date.now();
 		this.goal = {
 			id: `goal-${this.nextGoalId++}`,
-			objective: trimmedObjective,
+			objective: storedObjective,
 			status: "active",
 			tokenBudget,
 			tokensUsed: 0,
@@ -100,7 +99,8 @@ export class GoalManager {
 	}
 
 	/**
-	 * Update goal objective
+	 * Update goal objective.
+	 * Large objectives (>4000 chars) are stored transparently in GOAL.md.
 	 */
 	updateObjective(objective: string): Goal | null {
 		if (!this.goal) {
@@ -111,13 +111,8 @@ export class GoalManager {
 		if (!trimmedObjective) {
 			throw new Error("Goal objective cannot be empty");
 		}
-		if (trimmedObjective.length > MAX_OBJECTIVE_CHARS) {
-			throw new Error(
-				`Goal objective exceeds maximum length of ${MAX_OBJECTIVE_CHARS} characters`,
-			);
-		}
 
-		this.goal.objective = trimmedObjective;
+		this.goal.objective = this.storeObjective(trimmedObjective);
 		this.goal.updatedAt = Date.now();
 
 		return this.goal;
@@ -269,6 +264,21 @@ export class GoalManager {
 		};
 	}
 
+	// ==================== Transparent Objective Storage ====================
+
+	/**
+	 * Store an objective, using GOAL.md transparently for large content.
+	 * Returns the stored objective string (either the content or a file reference).
+	 */
+	private storeObjective(content: string): string {
+		if (content.length > MAX_OBJECTIVE_CHARS) {
+			const goalFilePath = join(process.cwd(), "GOAL.md");
+			this.writeGoalFile(goalFilePath, content);
+			return `${FILE_OBJECTIVE_PREFIX}${goalFilePath}`;
+		}
+		return content;
+	}
+
 	// ==================== Goal File Editing ====================
 
 	/**
@@ -343,9 +353,9 @@ export class GoalManager {
 
 	/**
 	 * Read edited content from a file and save it as the new objective.
-	 * If content exceeds MAX_OBJECTIVE_CHARS, writes to GOAL.md and uses file reference.
+	 * Large content is stored transparently in GOAL.md.
 	 */
-	loadGoalFromFile(filePath: string, useFileReference: boolean): void {
+	loadGoalFromFile(filePath: string): void {
 		if (!this.goal) {
 			throw new Error("No goal exists to update");
 		}
@@ -355,14 +365,7 @@ export class GoalManager {
 			throw new Error("Goal file is empty");
 		}
 
-		if (useFileReference && content.length > MAX_OBJECTIVE_CHARS) {
-			// Write the content to GOAL.md and use file reference
-			const goalFilePath = join(process.cwd(), "GOAL.md");
-			this.writeGoalFile(goalFilePath, content);
-			this.goal.objective = `${FILE_OBJECTIVE_PREFIX}${goalFilePath}`;
-		} else {
-			this.goal.objective = content;
-		}
+		this.goal.objective = this.storeObjective(content);
 
 		// Validate the objective
 		const trimmed = this.goal.objective.trim();
@@ -381,11 +384,11 @@ export class GoalManager {
 
 	/**
 	 * Open an editor for the current goal and update it with the edited content.
+	 * Large objectives are stored transparently in GOAL.md.
 	 * Returns the updated goal.
 	 * @param editor - Editor command to use (defaults to EDITOR env var or 'nano')
-	 * @param useFileReference - If true and content > 4000 chars, writes to GOAL.md
 	 */
-	async editGoal(editor?: string, useFileReference: boolean = false): Promise<Goal> {
+	async editGoal(editor?: string): Promise<Goal> {
 		if (!this.goal) {
 			throw new Error("No goal exists to edit");
 		}
@@ -416,7 +419,7 @@ export class GoalManager {
 			});
 
 			// Load the edited content from the temp file
-			this.loadGoalFromFile(tempFile, useFileReference);
+			this.loadGoalFromFile(tempFile);
 
 			return this.goal;
 		} finally {
