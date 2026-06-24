@@ -63,43 +63,56 @@ This document outlines the planned development roadmap for Telos.
   - Helper functions exported for testability: `truncate`, `formatSubGoalProgress`, `STATUS_CODES`, `CHAIN_STATUS_CODES`
   - 15 unit tests for footer helpers (74 total test suite)
 
-- [ ] **Goal Chain Widget**
-  - Display active goal chain status with rich detail
-  - Show primary goal and generation in a dedicated widget
-  - Sub-goal progress visualization (not just count)
-  - Quick access to chain details via click/hover
+- [x] **Goal Chain Widget** (v0.3.0-beta)
+  - `renderChainWidget()` displays active chain with rich detail
+  - Chain header with truncated primary goal (30 chars)
+  - Sub-goal breakdown: `10/20 done · 5 active · 3 blocked · 2 pending`
+  - Evolution symbols: ⊕N (clause version), gN (generation), ℒN (learnings)
+  - Actionable sub-goals preview (up to 2)
+  - Recent learnings preview (truncated at 80 chars)
+  - Integration into footer alongside goal status bar
 
-- [ ] **Evolution Visualization**
-  - Show reproductive clause version with mutation history
-  - Display learnings count and key learnings
-  - Generation progression indicator
-  - Visual timeline of chain evolution
+- [x] **Evolution Visualization** (v0.3.0-beta)
+  - `formatEvolutionInfo()` renders compact symbols: ⊕N, gN, ℒN
+  - Integrated into chain status display
+  - `EVOLUTION_SYMBOLS` exported for testability
+  - 4 unit tests for evolution info formatting
 
-- [ ] **Enhanced Goal Display**
-  - Syntax highlighting for objectives
-  - Better formatting for long objectives
-  - Collapsible sections for details
-  - Timestamp formatting
+- [x] **Enhanced Goal Display**
+  - ANSI color codes for status highlighting (green/yellow/red/cyan/bright/gray)
+  - `COLORS`, `STATUS_COLORS`, `CHAIN_STATUS_COLORS` objects
+  - `colorize()`, `colorizeStatus()`, `colorizeChainStatus()`, `getStatusColor()` helpers
+  - 10 unit tests for color functions
+  - 15 unit tests for TUI footer helpers
+  - 7 `renderChainWidget` tests
 
 ### Documentation
-- [ ] Update README with TUI integration screenshots
+- [x] Updated README with TUI Integration section
+  - Goal status footer codes ([A],[P],[B],[✓],[⌀])
+  - Goal chain widget documentation
+  - Evolution symbols table
+  - Colorized status integration
+- [x] Added `/goal edit` command to README and quick reference
 - [ ] Add TUI section to EXAMPLES.md
 - [ ] Document TUI-specific features
 
 ## Version 0.4.0 - Goal Editing & Files
 
 ### Priority 1 Features
-- [ ] **`/goal edit` Command**
-  - Open editor to modify objective
-  - Support for large objectives (>4000 chars)
-  - Write to file when too long
-  - Automatic file reference handling
+- [x] **`/goal edit` Command** (v0.4.0-alpha)
+  - Open editor to modify objective via `$EDITOR`
+  - Transparent large objective handling (>4000 chars auto-stored in GOAL.md)
+  - Automatic file reference resolution (user never sees `file:` prefix)
+  - `GoalManager.storeObjective()` for transparent large-content storage
+  - No `--file` flag needed — file operations are invisible to the user
+  - `GoalManager.editGoal()` removed `useFileReference` parameter
 
-- [ ] **Goal File Support**
-  - Read objectives from GOAL.md files
-  - Edit goal files directly
-  - Auto-detect goal files in project
-  - Support markdown formatting in objectives
+- [x] **Goal File Support** (v0.4.0-alpha)
+  - `storeObjective(content)` auto-writes to GOAL.md when content > 4000 chars
+  - `resolveFileReference()` reads from GOAL.md transparently
+  - `GoalManager.createGoal()` handles large objectives transparently
+  - `GoalManager.loadGoalFromFile()` auto-detects large content
+  - User interacts with `/goal <objective>`, `/goal edit`, `/goal show` — no file awareness needed
 
 - [ ] **Objective Templates**
   - Predefined goal templates
@@ -113,7 +126,16 @@ This document outlines the planned development roadmap for Telos.
   - Update mutation guidelines
   - Version history tracking
 
+- [x] **Session Validation** (v0.4.0-alpha)
+  - `GoalChainManager.validateEntry()` for structured diagnostics
+  - Schema version checking (below/above current version)
+  - Per-chain validation: id, primaryGoal, reproductive clause required
+  - Graceful degradation: `loadFromSession()` skips invalid chains, rejects old schemas
+  - Enhanced `/goalchain diagnose` with validation output
+  - 6 new validation tests (142 total)
+
 ### Documentation
+- [x] Updated README with TUI Integration section
 - [ ] Goal editing guide
 - [ ] Template documentation
 - [ ] File-based objective examples
@@ -254,8 +276,8 @@ This document outlines the planned development roadmap for Telos.
 |---------|---------------|--------|
 | 0.1.0 | 2026-06-23 | ✅ Released |
 | 0.2.0 | 2026-06-23 | ✅ Released |
-| 0.3.0 | 2026-06-24 | 🚧 In Progress (TUI footer complete, widget & evolution pending) |
-| 0.4.0 | TBD | 📋 Planned |
+| 0.3.0 | 2026-06-24 | ✅ TUI footer complete, Goal Chain Widget & Evolution Visualization complete |
+| 0.4.0 | TBD | 🚧 In Progress (/goal edit, Goal File Support, Session Validation) |
 | 0.5.0 | TBD | 📋 Planned |
 | 0.6.0 | TBD | 📋 Planned |
 | 1.0.0 | TBD | 📋 Planned |
@@ -307,5 +329,5 @@ Your feedback helps us prioritize! Join the discussion in GitHub issues.
 ---
 
 **Last Updated**: 2026-06-24
-**Current Version**: 0.3.0-alpha
-**Next Version**: 0.3.0 (Goal Chain Widget, Evolution Visualization)
+**Current Version**: 0.4.0-alpha
+**Next Version**: 0.4.0 (Objective Templates, Reproductive Clause Editing)

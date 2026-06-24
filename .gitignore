@@ -44,3 +44,4 @@ pi-test/
 # Session files (if testing locally)
 *.jsonl
 .pi/.envrc
+/GOAL.md
