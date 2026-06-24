@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { GoalChainManager } from "../src/goal-chain.js";
-import { truncate, formatSubGoalProgress, formatEvolutionInfo, STATUS_CODES, CHAIN_STATUS_CODES, EVOLUTION_SYMBOLS } from "../src/tui/footer.js";
+import { truncate, formatSubGoalProgress, formatEvolutionInfo, renderChainWidget, STATUS_CODES, CHAIN_STATUS_CODES, EVOLUTION_SYMBOLS } from "../src/tui/footer.js";
 
 // ===================== truncate tests =====================
 
@@ -167,4 +167,124 @@ test("formatEvolutionInfo shows learnings count", () => {
 	assert.ok(evolution.includes(EVOLUTION_SYMBOLS.learnings), "Should show learnings symbol");
 	// 3 unique learnings
 	assert.ok(evolution.includes("3"), "Should show count of 3 learnings");
+});
+
+// ===================== renderChainWidget Tests =====================
+
+test("renderChainWidget with no context is no-op", () => {
+	const manager = new GoalChainManager();
+	renderChainWidget(undefined, manager);
+	// Should not throw
+});
+
+test("renderChainWidget with no manager is no-op", () => {
+	renderChainWidget({ ui: { setStatus: () => {} } });
+	// Should not throw
+});
+
+test("renderChainWidget with no chains sets undefined", () => {
+	const manager = new GoalChainManager();
+	let received = undefined;
+	renderChainWidget(
+		{ ui: { setStatus: (key, value) => { received = { key, value }; } } },
+		manager,
+	);
+	assert.equal(received?.key, "telos-chain-widget");
+	assert.equal(received?.value, undefined);
+});
+
+test("renderChainWidget renders chain info with sub-goals", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Develop a modular system", undefined, [
+		"Design architecture",
+		"Implement core",
+	]);
+
+	manager.updateSubGoalStatus(chain.id, "1", "complete", [
+		"Use dependency injection",
+	]);
+	manager.updateSubGoalStatus(chain.id, "2", "active");
+
+	let received = undefined;
+	renderChainWidget(
+		{ ui: { setStatus: (key, value) => { received = { key, value }; } } },
+		manager,
+	);
+
+	assert.equal(received?.key, "telos-chain-widget");
+	assert.ok(received?.value, "Should have rendered value");
+	assert.ok(received.value.includes("Develop a modular system"), "Should include primary goal");
+	assert.ok(received.value.includes("1/2 done"), "Should include progress");
+	assert.ok(received.value.includes("1 active"), "Should include active count");
+});
+
+test("renderChainWidget includes learnings preview", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Test learnings", undefined, [
+		"Step 1",
+		"Step 2",
+	]);
+
+	manager.updateSubGoalStatus(chain.id, "1", "complete", [
+		"Learning one about the system",
+		"Learning two about modules",
+	]);
+	manager.updateSubGoalStatus(chain.id, "2", "complete", [
+		"Learning three about testing",
+	]);
+
+	let received = undefined;
+	renderChainWidget(
+		{ ui: { setStatus: (key, value) => { received = { key, value }; } } },
+		manager,
+	);
+
+	assert.ok(received?.value, "Should have rendered value");
+	assert.ok(received.value.includes("ℒ:"), "Should include learnings preview");
+	assert.ok(received.value.includes("Learning one"), "Should include first learning");
+});
+
+test("renderChainWidget shows actionable sub-goals", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Test actions", undefined, [
+		"Build frontend",
+		"Build backend",
+	]);
+
+	manager.updateSubGoalStatus(chain.id, "1", "active");
+	// "2" remains pending
+
+	let received = undefined;
+	renderChainWidget(
+		{ ui: { setStatus: (key, value) => { received = { key, value }; } } },
+		manager,
+	);
+
+	assert.ok(received?.value, "Should have rendered value");
+	assert.ok(received.value.includes("Build frontend"), "Should show actionable sub-goal");
+	assert.ok(received.value.includes("Build backend"), "Should show pending sub-goal");
+});
+
+test("renderChainWidget truncates long objectives", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Develop a very long primary goal that should be truncated in the widget display", undefined, [
+		"Design and implement a comprehensive architecture for the system that covers all aspects",
+	]);
+
+	manager.updateSubGoalStatus(chain.id, "1", "complete", [
+		"This is a very long learning message that should also be truncated when displayed in the chain widget",
+	]);
+
+	let received = undefined;
+	renderChainWidget(
+		{ ui: { setStatus: (key, value) => { received = { key, value }; } } },
+		manager,
+	);
+
+	assert.ok(received?.value, "Should have rendered value");
+	// Primary goal should be truncated (max 40 chars)
+	const primaryLine = received.value.split("\n")[0];
+	assert.ok(primaryLine.length <= 42, "Primary goal line should be truncated");
+	// Learning should be truncated (max 40 chars)
+	assert.ok(received.value.includes("ℒ:"), "Should have learnings section");
 });

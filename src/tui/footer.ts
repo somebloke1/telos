@@ -155,3 +155,59 @@ export function renderGoalFooter(
 		`[${statusChar}] ${preview}${budgetInfo}  |  ${chainStatus || "no chain"}`,
 	);
 }
+
+/**
+ * Render a rich Goal Chain Widget in Pi's status area.
+ *
+ * Displays chain header, primary goal, sub-goal breakdown, actionable
+ * sub-goals, and recent learnings preview. Useful when the user wants
+ * to see the full chain state without opening the chain detail view.
+ */
+export function renderChainWidget(
+	ctx: GoalStatusContext | undefined,
+	goalChainManager?: GoalChainManager,
+): void {
+	const setStatus = ctx?.ui?.setStatus;
+	if (typeof setStatus !== "function" || !goalChainManager) {
+		return;
+	}
+
+	const allChains = goalChainManager.getAllGoalChains();
+	if (allChains.length === 0) {
+		setStatus("telos-chain-widget", undefined);
+		return;
+	}
+
+	const latestChain = allChains.reduce((a, b) => (a.createdAt > b.createdAt ? a : b));
+	const summary = goalChainManager.getActionableSummary(latestChain);
+
+	// Build rich widget content
+	const lines: string[] = [];
+	const chainCode = CHAIN_STATUS_CODES[latestChain.status] ?? "·";
+	lines.push(`${chainCode} ${summary.primaryGoalShort}`);
+
+	// Sub-goal breakdown
+	const { total, completed, blocked, active, pending, inferred } = summary.subGoalCounts;
+	lines.push(`  ${completed}/${total} done · ${active} active · ${blocked} blocked`);
+
+	// Evolution info
+	const evolution = formatEvolutionInfo(latestChain);
+	if (evolution) lines.push(`  ⊕${latestChain.reproductiveClause.version} ${evolution}`);
+
+	// Actionable sub-goals (up to 2)
+	if (summary.actionableSubGoals.length > 0) {
+		const topActions = summary.actionableSubGoals.slice(0, 2);
+		topActions.forEach((sg) => {
+			const prefix = sg.status === "active" ? "→" : "•";
+			lines.push(`  ${prefix} ${truncate(sg.objective, 50)}`);
+		});
+	}
+
+	// Recent learnings (up to 2)
+	if (summary.recentLearnings.length > 0) {
+		const topLearnings = summary.recentLearnings.slice(0, 2);
+		lines.push(`  ℒ: ${topLearnings.map((l) => truncate(l, 40)).join("; ")}`);
+	}
+
+	setStatus("telos-chain-widget", lines.join("\n"));
+}
