@@ -68,6 +68,12 @@ export interface GoalChainPersistenceEntry {
 	chains: GoalChain[];
 }
 
+/** Truncate text for display with ellipsis. */
+function truncateForDisplay(value: string, maxLength: number): string {
+	const cleaned = value.trim().replace(/\s+/g, " ");
+	return cleaned.length > maxLength ? `${cleaned.slice(0, maxLength - 1)}…` : cleaned;
+}
+
 /**
  * GoalChainManager manages evolutionary goal chains
  */
@@ -655,63 +661,6 @@ export class GoalChainManager {
 		return `Break down and retry blocked goal: ${blockedObjective}`;
 	}
 
-	private inferNextStepsFromPrimaryGoal(chain: GoalChain): string[] {
-		const goal = chain.primaryGoal.trim();
-		const steps: string[] = [];
-		const lowerGoal = goal.toLowerCase();
-
-		if (chain.subGoals.length === 0) {
-			steps.push(`Decompose primary goal into concrete sub-goals: ${this.truncateText(goal, 140)}`);
-		}
-
-		if (lowerGoal.includes("fix") || lowerGoal.includes("bug") || lowerGoal.includes("stable")) {
-			steps.push("Audit current behavior and identify the smallest existing-feature bug to fix next");
-			steps.push("Add or run a focused smoke test that proves the selected fix works");
-		}
-
-		if (lowerGoal.includes("test") || lowerGoal.includes("isolation") || lowerGoal.includes("pi-test")) {
-			steps.push("Run the extension in isolated pi-test configuration and record the observed behavior");
-		}
-
-		if (lowerGoal.includes("github") || lowerGoal.includes("commit") || lowerGoal.includes("discipline")) {
-			steps.push("Review git status and separate unrelated changes before committing or syncing fixes");
-		}
-
-		if (lowerGoal.includes("develop") || lowerGoal.includes("codebase") || lowerGoal.includes("software")) {
-			steps.push("Inspect recent changes for a lean refactor or cleanup that supports the primary goal without adding scope");
-		}
-
-		if (steps.length === 0) {
-			steps.push(`Identify the next smallest verifiable step toward: ${this.truncateText(goal, 140)}`);
-			steps.push("Validate the next step with direct evidence before marking it complete");
-		}
-
-		return steps.slice(0, 4);
-	}
-
-	private truncateText(value: string, maxLength: number): string {
-		const normalized = value.trim().replace(/\s+/g, " ");
-		return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 1)}…` : normalized;
-	}
-
-	/**
-	 * Infer intermediate steps from primary goal
-	 */
-	private inferIntermediateSteps(primaryGoal: string, recordSpace: RecordSpaceEntry[]): string[] {
-		// Simplified inference - would be LLM-generated in practice
-		const steps: string[] = [];
-
-		// Extract key actions from primary goal
-		const actionWords = primaryGoal.match(/(implement|create|build|design|develop|analyze|test)/gi);
-		if (actionWords && actionWords.length > 1) {
-			actionWords.slice(0, 2).forEach((action, index) => {
-				steps.push(`Step ${index + 1}: ${action} key components`);
-			});
-		}
-
-		return steps;
-	}
-
 	/**
 	 * Resolve a sub-goal ID string to an internal sub-goal ID.
 	 * Accepts either the full ID ("subgoal-N") or a 1-based numeric index.
@@ -950,6 +899,84 @@ export class GoalChainManager {
 				chain.subGoals.length > 0
 					? chain.subGoals.reduce((sum, sg) => sum + sg.generation, 0) / chain.subGoals.length
 					: 0,
+		};
+	}
+
+	/**
+	 * Get a structured actionable summary of a chain for TUI widget display.
+	 *
+	 * Returns a compact summary that can be used by TUI components to display
+	 * chain status, progress, and actionable items without formatting the full
+	 * chain text.
+	 */
+	getActionableSummary(chain: GoalChain): {
+		id: string;
+		status: string;
+		primaryGoal: string;
+		primaryGoalShort: string;
+		generation: number;
+		clauseVersion: number;
+		subGoalCounts: {
+			total: number;
+			completed: number;
+			blocked: number;
+			active: number;
+			pending: number;
+			inferred: number;
+		};
+		progressString: string;
+		recentLearnings: string[];
+		actionableSubGoals: Array<{ id: string; status: string; objective: string }>;
+		lastMutationAt: number;
+	} {
+		const completed = chain.subGoals.filter((sg) => sg.status === "complete");
+		const blocked = chain.subGoals.filter((sg) => sg.status === "blocked");
+		const active = chain.subGoals.filter((sg) => sg.status === "active");
+		const pending = chain.subGoals.filter((sg) => sg.status === "pending");
+		const inferred = chain.subGoals.filter((sg) => sg.inferredFromRecord);
+
+		// Build progress string: "2/5 done · 1 active" format
+		const progressParts: string[] = [];
+		const total = chain.subGoals.length;
+		if (completed.length > 0) progressParts.push(`${completed.length}/${total} done`);
+		if (active.length > 0) progressParts.push(`${active.length} active`);
+		if (blocked.length > 0) progressParts.push(`${blocked.length} blocked`);
+		if (progressParts.length === 0 && total > 0) progressParts.push(`${total} pending`);
+
+		// Gather recent learnings from the record space
+		const recentLearnings: string[] = [];
+		const maxLearnings = 3;
+		for (let i = chain.recordSpace.length - 1; i >= 0 && recentLearnings.length < maxLearnings; i--) {
+			const entry = chain.recordSpace[i];
+			if (entry.learnings?.length) {
+				recentLearnings.push(...entry.learnings);
+			}
+		}
+		recentLearnings.reverse();
+
+		return {
+			id: chain.id,
+			status: chain.status,
+			primaryGoal: chain.primaryGoal,
+			primaryGoalShort: truncateForDisplay(chain.primaryGoal, 40),
+			generation: chain.currentGeneration,
+			clauseVersion: chain.reproductiveClause.version,
+			subGoalCounts: {
+				total,
+				completed: completed.length,
+				blocked: blocked.length,
+				active: active.length,
+				pending: pending.length,
+				inferred: inferred.length,
+			},
+			progressString: progressParts.join(" · "),
+			recentLearnings,
+			actionableSubGoals: [...active, ...pending].map((sg) => ({
+				id: sg.id,
+				status: sg.status,
+				objective: sg.objective,
+			})),
+			lastMutationAt: chain.lastMutationAt,
 		};
 	}
 }
