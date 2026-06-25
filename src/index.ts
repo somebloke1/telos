@@ -176,7 +176,7 @@ export default function (pi: ExtensionAPI) {
 				lastGoalChainContinuationTime = value;
 			},
 			minInterval: MIN_GOAL_CHAIN_CONTINUATION_INTERVAL,
-		});
+		}, { allowWithoutActionableSubGoals: true });
 	});
 
 	// Track token usage for goals
@@ -1507,11 +1507,17 @@ async function checkGoalChainContinuation(
 			message.push(
 				"",
 				"No pending or active sub-goals are currently queued.",
-				"Action: inspect the chain, then add or infer the next sub-goal if the primary goal still requires work; otherwise report that the chain has no queued work.",
+				"Action: add or infer the next sub-goal toward the primary goal.",
+				"If additional sub-goals are no longer making a meaningful difference, recognize diminishing returns and evolve at a more basic level: call mutate_reproductive_clause to start a new generation, then queue sub-goals for it.",
+				"Continuous development never ceases while the chain is active; only the user pauses it. Do not declare the chain done.",
 			);
 		}
 
-		pi.sendUserMessage(message.join("\n"));
+		// deliverAs: followUp bridges into pi's agent loop: during turn_end handling,
+		// isStreaming is still true, so sendUserMessage without a streaming behavior
+		// would throw and be swallowed (the continuation never fires). followUp queues
+		// the message, which the loop drains via getFollowUpMessages before agent_end.
+		pi.sendUserMessage(message.join("\n"), { deliverAs: "followUp" });
 	} catch (error) {
 		console.error("Failed to trigger goal chain continuation:", error);
 	} finally {
