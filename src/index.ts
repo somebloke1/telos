@@ -28,14 +28,16 @@ import { GoalTools } from "./goal-tools.js";
 import { GoalContinuation } from "./goal-continuation.js";
 import { renderGoalFooter } from "./tui/footer.js";
 import { GoalChainManager, type GoalChain } from "./goal-chain.js";
+import { resolveTelosConfigFromEnv } from "./config.js";
 
 export default function (pi: ExtensionAPI) {
 	const goalManager = new GoalManager();
 	const goalTools = new GoalTools(goalManager, pi);
 	const goalContinuation = new GoalContinuation(goalManager, pi);
 
-	// Initialize goal manager and goal chain manager on session start
-	const goalChainManager = new GoalChainManager();
+	// Initialize managers with centralized Telos config so static values can migrate over time.
+	const telosConfig = resolveTelosConfigFromEnv();
+	const goalChainManager = new GoalChainManager(telosConfig);
 	let goalChainContinuationInProgress = false;
 	let lastGoalChainContinuationTime = 0;
 	let lastGoalHandoffNoticeTime = 0;
@@ -256,6 +258,67 @@ export default function (pi: ExtensionAPI) {
 					},
 				],
 				details: { exists: true, chain, stats },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "get_sub_goal_detail",
+		label: "Get Sub-Goal Detail",
+		description: "Retrieve full cold-memory detail for a specific sub-goal, including objective, records, and learnings",
+		promptSnippet: "Look up full sub-goal detail when compact chain summaries are insufficient",
+		promptGuidelines: [
+			"Use get_sub_goal_detail when /goalchain show or get_goal_chain returns a compact sub-goal summary",
+			"Prefer compact chain summaries for planning; retrieve full detail only when necessary",
+			"Use this to inspect archived completed sub-goals without bloating the whole chain context",
+		],
+		parameters: Type.Object({
+			chain_id: Type.String({ description: "The goal chain ID" }),
+			sub_goal_id: Type.String({ description: "Sub-goal ID or 1-based numeric index" }),
+		}),
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const detail = goalChainManager.getSubGoalDetail(params.chain_id, params.sub_goal_id);
+			return {
+				content: [{ type: "text", text: detail }],
+				details: { chain_id: params.chain_id, sub_goal_id: params.sub_goal_id },
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "compact_goal_chain",
+		label: "Compact Goal Chain",
+		description: "Run deterministic goal-chain context compaction and return entropy metrics plus distilled warm-memory summary",
+		promptSnippet: "Compact a goal chain's record space into warm memory before mutation or inference",
+		promptGuidelines: [
+			"Use compact_goal_chain when chain context appears stale, duplicated, or too large",
+			"Compaction preserves detail via get_sub_goal_detail while reducing normal planning context",
+			"Treat compaction as routine maintenance before mutation, not as destructive pruning",
+		],
+		parameters: Type.Object({
+			chain_id: Type.String({ description: "The goal chain ID" }),
+		}),
+		async execute(toolCallId, params, signal, onUpdate, ctx) {
+			const summary = goalChainManager.compactGoalChain(params.chain_id);
+			await goalChainManager.persistToSession(pi);
+			return {
+				content: [
+					{
+						type: "text",
+						text: [
+							"Goal chain compacted:",
+							`- Generation: ${summary.generation}`,
+							`- Source sub-goals: ${summary.sourceSubGoalCount}`,
+							`- Source records: ${summary.sourceRecordCount}`,
+							`- Archived sub-goals: ${summary.archivedSubGoalIds.length}`,
+							`- Oversized sub-goals: ${summary.metrics.oversizedSubGoals}`,
+							`- Inferred context dumps: ${summary.metrics.inferredContextDumps}`,
+							"- Stable learnings:",
+							...(summary.stableLearnings.length ? summary.stableLearnings.map((l) => `  - ${l}`) : ["  (none yet)"]),
+						].join("\n"),
+					},
+				],
+				details: { summary },
 			};
 		},
 	});
@@ -927,7 +990,7 @@ async function handleGoalChainCommand(
 			const chains = goalChainManager.getAllGoalChains();
 			if (chains.length === 0) {
 				ctx.ui.notify(
-					"No goal chains. Usage: /goalchain create <primary_goal> | continue [id] | handoff [id] | list | show <id> [--json] | add_sub_goal <id> <objective> | mutate <id> | delete <id> | infer <id> | diagnose",
+					"No goal chains. Usage: /goalchain create <primary_goal> | continue [id] | handoff [id] | list | show <id> [--json] | detail <id> <sub_goal_id> | compact <id> | add_sub_goal <id> <objective> | mutate <id> | delete <id> | infer <id> | diagnose",
 					"info",
 				);
 				return;
@@ -1113,6 +1176,56 @@ async function handleGoalChainCommand(
 			break;
 		}
 
+		case "detail":
+		case "subgoal":
+		case "sub_goal": {
+			const tokens = remaining.split(/\s+/).filter(Boolean);
+			let chainId = tokens[0] || "";
+			let subGoalId = tokens[1] || "";
+			if (!chainId.startsWith("chain-")) {
+				subGoalId = chainId;
+				chainId = resolveChainId("", true) || "";
+			}
+			if (!chainId || !subGoalId) {
+				ctx.ui.notify(
+					"Usage: /goalchain detail <chain_id> <sub_goal_id> (or omit chain_id if only one chain exists)",
+					"error",
+				);
+				return;
+			}
+			ctx.ui.notify(goalChainManager.getSubGoalDetail(chainId, subGoalId), "info");
+			break;
+		}
+
+		case "compact":
+		case "compact_context":
+		case "distill": {
+			const chainId = resolveChainId(remaining, true);
+			if (!chainId) {
+				ctx.ui.notify(
+					"Usage: /goalchain compact <chain_id> (or omit chain_id if only one chain exists)",
+					"error",
+				);
+				return;
+			}
+			const summary = goalChainManager.compactGoalChain(chainId);
+			await goalChainManager.persistToSession(pi);
+			ctx.ui.notify(
+				[
+					"Goal chain compacted:",
+					`- Generation: ${summary.generation}`,
+					`- Source sub-goals: ${summary.sourceSubGoalCount}`,
+					`- Source records: ${summary.sourceRecordCount}`,
+					`- Archived sub-goals: ${summary.archivedSubGoalIds.length}`,
+					`- Curator: ${summary.curator.enabled ? `${summary.curator.provider}/${summary.curator.model}` : "deterministic fallback"}`,
+					"- Stable learnings:",
+					...(summary.stableLearnings.length ? summary.stableLearnings.map((learning) => `  - ${learning}`) : ["  (none yet)"]),
+				].join("\n"),
+				"info",
+			);
+			break;
+		}
+
 		case "delete": {
 			const chainId = remaining || parts[1];
 			if (!chainId) {
@@ -1232,7 +1345,7 @@ async function handleGoalChainCommand(
 
 		default:
 			ctx.ui.notify(
-				"Usage: /goalchain create <primary_goal> | continue [id] | handoff [id] | list | show <id> [--json] | add_sub_goal <id> <objective> | mutate <id> | delete <id> | infer <id> | diagnose",
+				"Usage: /goalchain create <primary_goal> | continue [id] | handoff [id] | list | show <id> [--json] | detail <id> <sub_goal_id> | compact <id> | add_sub_goal <id> <objective> | mutate <id> | delete <id> | infer <id> | diagnose",
 				"info",
 			);
 			break;

@@ -162,8 +162,7 @@ describe("GoalManager - temp file editing", () => {
 		const goal = manager.getGoal();
 		assert.ok(goal.objective.startsWith("file:"), "Should be file reference");
 		assert.ok(existsSync(join(process.cwd(), "GOAL.md")), "Should create GOAL.md");
-		// Clean up
-		try { unlinkSync(join(process.cwd(), "GOAL.md")); } catch {}
+		// GOAL.md is shared generated state in parallel tests; leave it in place.
 	});
 
 	test("loadGoalFromFile stores large content as file reference automatically", () => {
@@ -233,8 +232,7 @@ describe("GoalManager - integration: edit workflow", () => {
 		const goal = manager.getGoal();
 		assert.ok(goal.objective.startsWith("file:"), "Should use file reference for large content");
 		assert.ok(goal.objective.includes("GOAL.md"), "Should reference GOAL.md");
-		// Clean up
-		try { unlinkSync(join(process.cwd(), "GOAL.md")); } catch {}
+		// GOAL.md is shared generated state in parallel tests; leave it in place.
 	});
 
 	test("edit workflow preserves timestamps", () => {

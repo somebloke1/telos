@@ -40,7 +40,9 @@ Telos adds persistent goal tracking to your Pi sessions. Goals help you stay foc
 - `/goalchain continue [id]` - Resume/trigger agent continuation for a chain
 - `/goalchain handoff [id]` - Start a fresh session with a compact chain continuity brief
 - `/goalchain list` - List all goal chains
-- `/goalchain show <id>` - View detailed information about a goal chain
+- `/goalchain show <id>` - View compact information about a goal chain
+- `/goalchain detail <id> <sub_goal_id>` - View full cold-memory detail for a sub-goal
+- `/goalchain compact <id>` - Distill goal-chain history into warm-memory summaries
 - `/goalchain add_sub_goal <id> <objective>` - Add a sub-goal to an existing chain
 - `/goalchain mutate <id>` - Prompt mutation guidance for the reproductive clause
 - `/goalchain infer <id>` - Infer sub-goals from record space
@@ -222,6 +224,38 @@ The TUI uses ANSI color codes for status display:
 - **Gray** for budget-limited
 
 Colors are applied consistently across goal status, chain status, and sub-goal status displays.
+
+## Configuration
+
+Telos uses a centralized app-level configuration module (`src/config.ts`) so static values can migrate to configurable settings over time without scattering environment lookups through feature code.
+
+### Goal Chain Curator Configuration
+
+The first configurable area is the goal-chain cognitive metabolism/curator layer. It is optional and defaults to deterministic local compaction with no model calls.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TELOS_CURATOR_ENABLED` | `false` | Enable semantic curator metadata path |
+| `TELOS_CURATOR_PROVIDER` | `none` | Curator provider (`none` or `ollama`) |
+| `TELOS_CURATOR_HOST` | `http://127.0.0.1:11434` | Ollama host for local embedding calls |
+| `TELOS_CURATOR_MODEL` | `snowflake-arctic-embed2:latest` | Embedding model name |
+| `TELOS_CURATOR_TOP_K` | `8` | Number of semantically relevant records/clusters to retain |
+| `TELOS_CURATOR_TIMEOUT_MS` | `5000` | Curator request timeout budget |
+| `TELOS_CURATOR_ANCHOR_FILES` | `ROADMAP.md,README.md` | Stable semantic anchors for future embedding-backed curation |
+
+Recommended local embedding model:
+
+```bash
+TELOS_CURATOR_ENABLED=true \
+TELOS_CURATOR_PROVIDER=ollama \
+TELOS_CURATOR_HOST=http://127.0.0.1:11434 \
+TELOS_CURATOR_MODEL=snowflake-arctic-embed2:latest \
+pi --no-extensions -e ./src/index.ts
+```
+
+`local-embedder:latest` is also suitable when it aliases Snowflake locally. `nomic-embed-text:v1.5` is a lightweight fallback. `qwen3-embedding:8b` may provide higher semantic discrimination at higher runtime cost.
+
+The current implementation records curator configuration in compaction summaries and keeps deterministic compaction as the default fallback. Future work can add live Ollama embedding calls behind the same config surface without changing tool contracts.
 
 ## Usage
 
@@ -537,7 +571,9 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 /goalchain continue [id]            Trigger chain continuation
 /goalchain handoff [id]             Move active chain to a fresh session
 /goalchain list                     List all chains
-/goalchain show <id>                Show chain details
+/goalchain show <id>                Show compact chain details
+/goalchain detail <id> <sub_goal_id>      Show full sub-goal detail
+/goalchain compact <id>             Distill chain history
 /goalchain add_sub_goal <id> <objective>  Add a sub-goal
 /goalchain mutate <id>              Show mutation guidance
 /goalchain infer <id>               Infer sub-goals

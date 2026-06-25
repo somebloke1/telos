@@ -134,8 +134,20 @@ This document outlines the planned development roadmap for Telos.
   - Enhanced `/goalchain diagnose` with validation output
   - 6 new validation tests (142 total)
 
+- [x] **Goal Chain Cognitive Metabolism** (v0.4.0-alpha)
+  - Hot/Warm/Cold memory tiers for normal chain operation
+  - Deterministic context entropy metrics: objective chars, record chars, oversized sub-goals, inferred context dumps, raw record count
+  - `compactGoalChain()` distills history into warm-memory summaries without deleting cold details
+  - Bounded `buildInferenceContext()` avoids embedding full historical walls in inferred sub-goal objectives
+  - `/goalchain compact <id>` and `compact_goal_chain` tool for routine maintenance
+  - `/goalchain detail <id> <sub_goal_id>` and `get_sub_goal_detail` tool for cold-memory lookup
+  - Centralized `TelosConfig` abstraction for future migration of static values into configuration
+  - Configurable curator metadata path for local Ollama/Snowflake embeddings (`TELOS_CURATOR_*`)
+  - 8 new tests (156 total)
+
 ### Documentation
 - [x] Updated README with TUI Integration section
+- [x] Added configuration documentation for curator model/host abstraction
 - [ ] Goal editing guide
 - [ ] Template documentation
 - [ ] File-based objective examples

@@ -368,18 +368,16 @@ test("inferSubGoals with learnings produces inference from record space", () => 
 		"Auto-generate docs from code",
 	]);
 
-	// Should infer new sub-goals from record space, not keyword matching
+	// Should infer new sub-goals from compacted record space, not keyword matching or context dumps
 	const newSubGoals = manager.inferSubGoals(chain.id);
 	assert.ok(newSubGoals.length > 0, "Should infer sub-goals from record space");
-	// Inferred sub-goals should reference learnings from completed goals
-	const anyReferencedLearning = newSubGoals.some((sg) =>
-		sg.objective.toLowerCase().includes("plugin") ||
-		sg.objective.toLowerCase().includes("async") ||
-		sg.objective.toLowerCase().includes("snapshot") ||
-		sg.objective.toLowerCase().includes("auto") ||
-		sg.objective.toLowerCase().includes("modular"),
+	assert.ok(newSubGoals.every((sg) => sg.objective.length < 300), "Inferred objectives should stay compact");
+	assert.ok(chain.contextSummary, "Inference should maintain warm-memory summary");
+	assert.ok(
+		chain.contextSummary.stableLearnings.some((learning) => learning.includes("dependency injection")) ||
+		chain.contextSummary.recentLearnings.some((learning) => learning.includes("dependency injection")),
+		"Warm memory should retain learnings without embedding them in objective text",
 	);
-	assert.ok(anyReferencedLearning || newSubGoals.length >= 2, "Inferred goals should reflect record space context");
 });
 
 test("inferAlternativeObjective produces alternatives for blocked goals", () => {
@@ -635,4 +633,69 @@ test("GoalChainManager multiple evolution triggers produce progressive mutations
 	assert.ok(gen3 >= gen2, "Gen should progress after 3rd completion");
 	assert.ok(gen4 >= gen3, "Gen should progress after 4th completion");
 	assert.equal(chain.reproductiveClause.version, chain.currentGeneration, "Clause version should match generation");
+});
+
+// ===================== GoalChain Cognitive Metabolism Tests =====================
+
+test("GoalChainManager context metrics detect oversized inferred context dumps", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Maintain context health", undefined, [
+		"Analyze chain record space and infer next step. Context:\n" + "historic detail ".repeat(200),
+	]);
+	chain.subGoals[0].inferredFromRecord = true;
+
+	const metrics = manager.getContextMetrics(chain);
+	assert.ok(metrics.oversizedSubGoals >= 1, "Should detect oversized sub-goal objectives");
+	assert.ok(metrics.inferredContextDumps >= 1, "Should detect inferred context dumps");
+	assert.ok(metrics.needsCompaction, "Oversized inferred context should require compaction");
+});
+
+test("GoalChainManager compactGoalChain distills warm memory without deleting sub-goal detail", () => {
+	const manager = new GoalChainManager();
+	const longObjective = "Document a long historical task with implementation details. ".repeat(40);
+	const chain = manager.createGoalChain("Metabolize history", undefined, [longObjective, "Small task"]);
+
+	manager.updateSubGoalStatus(chain.id, "1", "complete", [
+		"Stable lesson: compact views should preserve full lookup detail",
+	]);
+	manager.updateSubGoalStatus(chain.id, "2", "complete", [
+		"Stable lesson: compact views should preserve full lookup detail",
+	]);
+
+	const summary = manager.compactGoalChain(chain.id);
+	assert.equal(summary.sourceSubGoalCount, 2);
+	assert.ok(summary.stableLearnings.some((learning) => learning.includes("2 supporting records")));
+	assert.ok(chain.contextSummary, "Chain should retain generated context summary");
+
+	const detail = manager.getSubGoalDetail(chain.id, "1");
+	assert.match(detail, /SUB-GOAL DETAIL/);
+	assert.ok(detail.includes(longObjective), "Cold-memory lookup should retain full objective text");
+});
+
+test("GoalChainManager formatGoalChain bounds non-active sub-goal text", () => {
+	const manager = new GoalChainManager();
+	const longObjective = "This sub-goal contains an excessive amount of historical context. ".repeat(80);
+	const chain = manager.createGoalChain("Bound display context", undefined, [longObjective, "Current task"]);
+	manager.updateSubGoalStatus(chain.id, "2", "active");
+
+	const formatted = manager.formatGoalChain(chain);
+	assert.ok(formatted.includes("Context:"), "Formatted chain should include context health header");
+	assert.ok(formatted.includes("detail lookup available"), "Long sub-goal should advertise detail lookup");
+	assert.ok(formatted.length < longObjective.length + 3000, "Formatted output should not be dominated by long sub-goal text");
+});
+
+test("GoalChainManager inferSubGoals does not embed full inference context in objective", () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("Infer next compact step", undefined, [
+		"Completed task A",
+		"Completed task B",
+	]);
+	manager.updateSubGoalStatus(chain.id, "1", "complete", ["Learning A should be retained in warm memory"]);
+	manager.updateSubGoalStatus(chain.id, "2", "complete", ["Learning B should be retained in warm memory"]);
+
+	const inferred = manager.inferSubGoals(chain.id);
+	assert.ok(inferred.length > 0);
+	assert.ok(inferred.every((sg) => !sg.objective.includes("Completed sub-goals")));
+	assert.ok(inferred.every((sg) => sg.objective.length < 300));
+	assert.ok(chain.contextSummary?.recentLearnings.length, "Warm memory should hold recent learnings");
 });

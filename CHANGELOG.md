@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (v0.4.0-alpha)
+- **Goal Chain Cognitive Metabolism** (`src/goal-chain.ts`)
+  - Added deterministic context entropy metrics: objective chars, record chars, oversized sub-goals, inferred context dumps, raw record count, completed count
+  - Added `compactGoalChain()` to distill cold record history into warm-memory summaries while preserving full sub-goal detail
+  - Added `GoalChainContextSummary` with completed summary, stable learnings, recent learnings, archived sub-goal IDs, and curator metadata
+  - Added bounded `buildInferenceContext()` using Hot/Warm/Cold memory tiers instead of dumping all completed goals into inferred objectives
+  - Inferred sub-goal objectives now stay compact and reference warm memory instead of embedding full historical context
+  - `/goalchain show` now displays compact chain summaries with detail lookup hints
+- **Cold-Memory Lookup**
+  - Added `get_sub_goal_detail` LLM tool for full objective, records, and learnings of a specific sub-goal
+  - Added `/goalchain detail <chain_id> <sub_goal_id>` command
+  - Added `/goalchain compact <chain_id>` command and `compact_goal_chain` LLM tool for normal maintenance operation
+- **Centralized Configuration** (`src/config.ts`)
+  - Added app-level `TelosConfig` and merge/env resolution helpers so static values can migrate into configuration over time
+  - Added configurable curator surface: `TELOS_CURATOR_ENABLED`, `TELOS_CURATOR_PROVIDER`, `TELOS_CURATOR_HOST`, `TELOS_CURATOR_MODEL`, `TELOS_CURATOR_TOP_K`, `TELOS_CURATOR_TIMEOUT_MS`, `TELOS_CURATOR_ANCHOR_FILES`
+  - Default curator model is `snowflake-arctic-embed2:latest` via local Ollama host, with deterministic fallback when disabled
+- **Expanded Test Suite**
+  - 156 tests total
+  - Added tests for context entropy metrics, compacted warm memory, bounded chain rendering, compact inference objectives, sub-goal detail lookup, and config resolution
+
 ### Added (v0.3.0 - In Development)
 - **TUI Footer Enhancements** (`src/tui/footer.ts`)
   - Status codes for goals: `[A]` active, `[P]` paused, `[B]` blocked, `[✓]` complete, `[⌀]` budget_limited

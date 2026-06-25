@@ -9,6 +9,13 @@
  * - Sub-goal inference from record space
  */
 
+import {
+	mergeTelosConfig,
+	type GoalChainCuratorProvider,
+	type TelosConfig,
+	type PartialTelosConfig,
+} from "./config.js";
+
 export interface ReproductiveClause {
 	primaryGoal: string;
 	essentialPrinciples: string[];
@@ -31,11 +38,42 @@ export interface SubGoal {
 	completedAt?: number;
 }
 
+export interface GoalChainContextMetrics {
+	totalObjectiveChars: number;
+	totalRecordChars: number;
+	oversizedSubGoals: number;
+	inferredContextDumps: number;
+	rawRecordCount: number;
+	completedSubGoals: number;
+	needsCompaction: boolean;
+}
+
+export interface GoalChainContextSummary {
+	generatedAt: number;
+	generation: number;
+	sourceSubGoalCount: number;
+	sourceRecordCount: number;
+	completedSummary: string;
+	stableLearnings: string[];
+	recentLearnings: string[];
+	archivedSubGoalIds: string[];
+	metrics: GoalChainContextMetrics;
+	curator: {
+		enabled: boolean;
+		provider: GoalChainCuratorProvider;
+		host: string;
+		model: string;
+		topK: number;
+		anchorFiles: string[];
+	};
+}
+
 export interface GoalChain {
 	id: string;
 	primaryGoal: string;
 	reproductiveClause: ReproductiveClause;
 	subGoals: SubGoal[];
+	contextSummary?: GoalChainContextSummary;
 	currentGeneration: number;
 	totalGenerations: number;
 	recordSpace: RecordSpaceEntry[];
@@ -93,10 +131,25 @@ export class GoalChainManager {
 	private static readonly SCHEMA_VERSION = 1;
 	private static readonly COMPLETED_SUB_GOAL_FULL_DISPLAY_LIMIT = 3;
 	private static readonly COMPLETED_SUB_GOAL_RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
+	private static readonly SUB_GOAL_SUMMARY_CHARS = 180;
+	private static readonly ACTIVE_SUB_GOAL_DETAIL_CHARS = 1200;
+	private static readonly INFERENCE_CONTEXT_CHARS = 6000;
+	private static readonly OVERSIZED_SUB_GOAL_CHARS = 1200;
+	private static readonly CONTEXT_OBJECTIVE_CHAR_BUDGET = 12000;
+	private static readonly CONTEXT_RECORD_CHAR_BUDGET = 16000;
 	private chains: Map<string, GoalChain> = new Map();
 	private reproductiveClauseCache: Map<string, { clause: ReproductiveClause; timestamp: number }> = new Map();
 	private chainIdCounter = 1;
 	private subGoalIdCounter = 1;
+	private readonly config: TelosConfig;
+
+	constructor(config?: PartialTelosConfig) {
+		this.config = mergeTelosConfig(config);
+	}
+
+	getConfig(): TelosConfig {
+		return this.config;
+	}
 
 	/**
 	 * Validate a persistence entry, returning structured diagnostics.
@@ -483,7 +536,7 @@ export class GoalChainManager {
 		const blockedGoals = chain.subGoals.filter((sg) => sg.status === "blocked");
 
 		// Extract only fresh completion/blocking learnings since the last mutation.
-		const lastMutationIndex = chain.recordSpace.findLastIndex((entry) => entry.type === "goal_mutated");
+		const lastMutationIndex = this.findLastRecordIndex(chain.recordSpace, (entry) => entry.type === "goal_mutated");
 		const learnings = chain.recordSpace
 			.slice(lastMutationIndex + 1)
 			.filter((entry) => entry.type === "goal_completed" || entry.type === "goal_blocked")
@@ -512,7 +565,7 @@ export class GoalChainManager {
 	private shouldEvolveChain(chain: GoalChain): boolean {
 		const completedGoals = chain.subGoals.filter((sg) => sg.status === "complete");
 		const minGoalsForEvolution = 2;
-		const lastMutationIndex = chain.recordSpace.findLastIndex((entry) => entry.type === "goal_mutated");
+		const lastMutationIndex = this.findLastRecordIndex(chain.recordSpace, (entry) => entry.type === "goal_mutated");
 		const recordsSinceLastMutation = chain.recordSpace.slice(lastMutationIndex + 1);
 
 		// Need minimum completed goals and fresh completion/blocking learnings since the last mutation.
@@ -560,6 +613,153 @@ export class GoalChainManager {
 		return value.trim().replace(/\s+/g, " ").toLowerCase();
 	}
 
+	private findLastRecordIndex(records: RecordSpaceEntry[], predicate: (record: RecordSpaceEntry) => boolean): number {
+		for (let index = records.length - 1; index >= 0; index--) {
+			if (predicate(records[index])) {
+				return index;
+			}
+		}
+		return -1;
+	}
+
+	private summarizeText(value: string, maxLength = GoalChainManager.SUB_GOAL_SUMMARY_CHARS): string {
+		const cleaned = value.trim().replace(/\s+/g, " ");
+		return cleaned.length > maxLength ? `${cleaned.slice(0, maxLength - 1)}…` : cleaned;
+	}
+
+	/**
+	 * Measure context entropy so compaction is deterministic, not subjective.
+	 */
+	getContextMetrics(chain: GoalChain): GoalChainContextMetrics {
+		const totalObjectiveChars = chain.subGoals.reduce((sum, sg) => sum + sg.objective.length, 0);
+		const totalRecordChars = chain.recordSpace.reduce((sum, record) => {
+			const learningChars = (record.learnings || []).reduce((acc, learning) => acc + learning.length, 0);
+			return sum + record.details.length + learningChars;
+		}, 0);
+		const oversizedSubGoals = chain.subGoals.filter(
+			(sg) => sg.objective.length > GoalChainManager.OVERSIZED_SUB_GOAL_CHARS,
+		).length;
+		const inferredContextDumps = chain.subGoals.filter(
+			(sg) => sg.inferredFromRecord && sg.objective.length > GoalChainManager.SUB_GOAL_SUMMARY_CHARS * 2,
+		).length;
+		const completedSubGoals = chain.subGoals.filter((sg) => sg.status === "complete").length;
+		const rawRecordCount = chain.recordSpace.length;
+		const needsCompaction =
+			totalObjectiveChars > GoalChainManager.CONTEXT_OBJECTIVE_CHAR_BUDGET ||
+			totalRecordChars > GoalChainManager.CONTEXT_RECORD_CHAR_BUDGET ||
+			oversizedSubGoals > 0 ||
+			inferredContextDumps > 0 ||
+			completedSubGoals > 12 ||
+			rawRecordCount > 50;
+
+		return {
+			totalObjectiveChars,
+			totalRecordChars,
+			oversizedSubGoals,
+			inferredContextDumps,
+			rawRecordCount,
+			completedSubGoals,
+			needsCompaction,
+		};
+	}
+
+	/**
+	 * Distill completed history into warm memory while keeping full details lookupable.
+	 */
+	compactGoalChain(chainId: string): GoalChainContextSummary {
+		const chain = this.chains.get(chainId);
+		if (!chain) {
+			throw new Error(`Goal chain ${chainId} not found`);
+		}
+		return this.compactChain(chain);
+	}
+
+	private compactChain(chain: GoalChain): GoalChainContextSummary {
+		const metrics = this.getContextMetrics(chain);
+		const completed = chain.subGoals.filter((sg) => sg.status === "complete");
+		const completedByGeneration = new Map<number, number>();
+		for (const sg of completed) {
+			completedByGeneration.set(sg.generation, (completedByGeneration.get(sg.generation) || 0) + 1);
+		}
+		const generationSummary = Array.from(completedByGeneration.entries())
+			.sort((a, b) => a[0] - b[0])
+			.map(([generation, count]) => `g${generation}: ${count}`)
+			.join(", ") || "none";
+
+		const learningSupport = new Map<string, { text: string; count: number; latest: number }>();
+		for (const record of chain.recordSpace) {
+			if (!record.learnings?.length) continue;
+			for (const learning of record.learnings) {
+				const normalized = this.normalizeText(learning);
+				if (!normalized) continue;
+				const existing = learningSupport.get(normalized);
+				if (existing) {
+					existing.count++;
+					existing.latest = Math.max(existing.latest, record.timestamp);
+				} else {
+					learningSupport.set(normalized, { text: this.summarizeText(learning, 220), count: 1, latest: record.timestamp });
+				}
+			}
+		}
+
+		const rankedLearnings = Array.from(learningSupport.values()).sort((a, b) => {
+			if (b.count !== a.count) return b.count - a.count;
+			return b.latest - a.latest;
+		});
+		const stableLearnings = rankedLearnings.slice(0, 8).map((item) =>
+			item.count > 1 ? `${item.text} (${item.count} supporting records)` : item.text,
+		);
+		const recentLearnings = chain.recordSpace
+			.slice(-20)
+			.flatMap((entry) => entry.learnings || [])
+			.reverse()
+			.map((learning) => this.summarizeText(learning, 180));
+
+		const retainedCompletedIds = new Set(
+			[...completed]
+				.sort((a, b) => (b.completedAt || b.createdAt) - (a.completedAt || a.createdAt))
+				.slice(0, GoalChainManager.COMPLETED_SUB_GOAL_FULL_DISPLAY_LIMIT)
+				.map((sg) => sg.id),
+		);
+		const archivedSubGoalIds = completed.filter((sg) => !retainedCompletedIds.has(sg.id)).map((sg) => sg.id);
+
+		const curator = this.config.goalChain.curator;
+		const summary: GoalChainContextSummary = {
+			generatedAt: Date.now(),
+			generation: chain.currentGeneration,
+			sourceSubGoalCount: chain.subGoals.length,
+			sourceRecordCount: chain.recordSpace.length,
+			completedSummary: `${completed.length} completed sub-goals across generations (${generationSummary}). Full historical detail is cold memory; use sub-goal detail lookup when needed.`,
+			stableLearnings,
+			recentLearnings: this.dedupeTexts(recentLearnings).slice(0, 6),
+			archivedSubGoalIds,
+			metrics,
+			curator: {
+				enabled: curator.enabled,
+				provider: curator.provider,
+				host: curator.host,
+				model: curator.model,
+				topK: curator.topK,
+				anchorFiles: [...curator.anchorFiles],
+			},
+		};
+		chain.contextSummary = summary;
+		return summary;
+	}
+
+	private ensureContextSummary(chain: GoalChain): GoalChainContextSummary {
+		const metrics = this.getContextMetrics(chain);
+		if (
+			!chain.contextSummary ||
+			metrics.needsCompaction ||
+			chain.contextSummary.sourceSubGoalCount !== chain.subGoals.length ||
+			chain.contextSummary.sourceRecordCount !== chain.recordSpace.length
+		) {
+			return this.compactChain(chain);
+		}
+		return chain.contextSummary;
+	}
+
 	/**
 	 * Infer sub-goals from record space.
 	 *
@@ -595,7 +795,7 @@ export class GoalChainManager {
 			this.addToRecordSpace(chain, "inference", subGoal.id, details);
 		};
 
-		// Build the inference context from the full historical record.
+		// Build a compacted inference context from hot/warm memory, not raw cold history.
 		const inferenceContext = this.buildInferenceContext(chain);
 
 		// If there are no actionable sub-goals and no record to reason from,
@@ -606,11 +806,10 @@ export class GoalChainManager {
 		);
 
 		if (actionableGoals.length === 0) {
-			// Inference: The chain has no pending work but is still active.
-			// The LLM should analyze the record and decide the next step.
+			// Keep inferred objectives concise; full context belongs in warm memory and lookup tools.
 			addInferredGoal(
-				`Analyze chain record space and infer next step. Context:\n${inferenceContext}`,
-				"Inferred — chain has no pending sub-goals; LLM should reason over full history",
+				"Analyze compacted chain context and infer the next implementation step",
+				`Inferred — compact context prepared (${inferenceContext.length} chars); LLM should reason over warm memory and retrieve cold details only when needed.`,
 			);
 		} else {
 			// Even when there are pending sub-goals, the LLM may benefit from
@@ -619,7 +818,7 @@ export class GoalChainManager {
 				chain,
 				"inference",
 				"infer-context",
-				`Inference context prepared: ${actionableGoals.length} pending sub-goals. LLM should review record space before selecting next work.`,
+				`Compact inference context prepared (${inferenceContext.length} chars): ${actionableGoals.length} actionable sub-goals. Retrieve sub-goal details only when needed.`,
 			);
 		}
 
@@ -630,78 +829,73 @@ export class GoalChainManager {
 	}
 
 	/**
-	 * Build a structured inference context from the chain's full record.
-	 * This is what the LLM reasons over — NOT keyword patterns.
+	 * Build a compact inference context from hot/warm memory.
+	 * Cold historical detail remains available through detail lookup.
 	 */
 	private buildInferenceContext(chain: GoalChain): string {
+		const summary = this.ensureContextSummary(chain);
 		const lines: string[] = [];
 
-		// 1. Reproductive clause — the chain's DNA
-		lines.push(`Primary goal: ${chain.primaryGoal}`);
+		lines.push(`Primary goal: ${this.summarizeText(chain.primaryGoal, 500)}`);
 		lines.push(`Generation: ${chain.currentGeneration} (clause v${chain.reproductiveClause.version})`);
 		lines.push(`Essential principles:`);
-		chain.reproductiveClause.essentialPrinciples.forEach((p) => lines.push(`  - ${p}`));
+		chain.reproductiveClause.essentialPrinciples.forEach((p) => lines.push(`  - ${this.summarizeText(p, 220)}`));
 
-		// 2. Sub-goal status breakdown
 		const completed = chain.subGoals.filter((sg) => sg.status === "complete");
 		const blocked = chain.subGoals.filter((sg) => sg.status === "blocked");
 		const pending = chain.subGoals.filter((sg) => sg.status === "pending");
 		const active = chain.subGoals.filter((sg) => sg.status === "active");
 
-		lines.push(`\nSub-goal summary: ${chain.subGoals.length} total, ${completed.length} done, ${active.length} active, ${pending.length} pending, ${blocked.length} blocked`);
-
-		// 3. Completed sub-goals with their learnings
-		if (completed.length > 0) {
-			lines.push(`\nCompleted sub-goals (with learnings):`);
-			for (const sg of completed) {
-				lines.push(`  [${sg.id}] ${sg.objective} (completed ${new Date(sg.completedAt || sg.createdAt).toLocaleString()})`);
-				const completionRecord = chain.recordSpace.find(
-					(r) => r.goalId === sg.id && r.type === "goal_completed" && r.learnings,
-				);
-				if (completionRecord?.learnings?.length) {
-					completionRecord.learnings.forEach((l) => lines.push(`    → ${l}`));
-				}
-			}
-		}
-
-		// 4. Blocked sub-goals with their failure reasons
-		if (blocked.length > 0) {
-			lines.push(`\nBlocked sub-goals (with learnings):`);
-			for (const sg of blocked) {
-				lines.push(`  [${sg.id}] ${sg.objective}`);
-				const blockRecord = chain.recordSpace.find(
-					(r) => r.goalId === sg.id && r.type === "goal_blocked" && r.learnings,
-				);
-				if (blockRecord?.learnings?.length) {
-					blockRecord.learnings.forEach((l) => lines.push(`    → ${l}`));
-				}
-			}
-		}
-
-		// 5. Pending/active sub-goals
-		if (pending.length > 0) {
-			lines.push(`\nPending sub-goals:`);
-			pending.forEach((sg) => lines.push(`  - ${sg.objective}`));
-		}
+		lines.push(`\nHot memory:`);
+		lines.push(`  Sub-goals: ${chain.subGoals.length} total, ${completed.length} done, ${active.length} active, ${pending.length} pending, ${blocked.length} blocked`);
 		if (active.length > 0) {
-			lines.push(`\nActive sub-goals:`);
-			active.forEach((sg) => lines.push(`  - ${sg.objective}`));
+			lines.push(`  Active sub-goals (fullest working text):`);
+			active.slice(0, 3).forEach((sg) => lines.push(`    [${sg.id}] ${this.summarizeText(sg.objective, GoalChainManager.ACTIVE_SUB_GOAL_DETAIL_CHARS)}`));
+		}
+		if (pending.length > 0) {
+			lines.push(`  Pending sub-goals:`);
+			pending.slice(0, 8).forEach((sg) => lines.push(`    [${sg.id}] ${this.summarizeText(sg.objective)}`));
+			if (pending.length > 8) lines.push(`    ... ${pending.length - 8} more pending; use detail lookup as needed`);
+		}
+		if (blocked.length > 0) {
+			lines.push(`  Blocked sub-goals:`);
+			blocked.slice(-5).forEach((sg) => lines.push(`    [${sg.id}] ${this.summarizeText(sg.objective)}`));
 		}
 
-		// 6. Record space summary (key events since last mutation)
-		const lastMutationIndex = chain.recordSpace.findLastIndex((r) => r.type === "goal_mutated");
-		const recentRecords = chain.recordSpace.slice(lastMutationIndex + 1);
+		lines.push(`\nWarm memory:`);
+		lines.push(`  ${summary.completedSummary}`);
+		if (summary.stableLearnings.length > 0) {
+			lines.push(`  Stable learnings:`);
+			summary.stableLearnings.forEach((learning) => lines.push(`    - ${learning}`));
+		}
+		if (summary.recentLearnings.length > 0) {
+			lines.push(`  Recent learnings:`);
+			summary.recentLearnings.slice(0, 5).forEach((learning) => lines.push(`    - ${learning}`));
+		}
+
+		const recentCompleted = completed
+			.slice()
+			.sort((a, b) => (b.completedAt || b.createdAt) - (a.completedAt || a.createdAt))
+			.slice(0, GoalChainManager.COMPLETED_SUB_GOAL_FULL_DISPLAY_LIMIT);
+		if (recentCompleted.length > 0) {
+			lines.push(`  Recent completed sub-goals:`);
+			recentCompleted.forEach((sg) => lines.push(`    [${sg.id}] ${this.summarizeText(sg.objective)}`));
+		}
+
+		lines.push(`\nCold memory:`);
+		lines.push(`  Archived completed sub-goals: ${summary.archivedSubGoalIds.length}`);
+		lines.push(`  Raw record entries: ${chain.recordSpace.length}`);
+		lines.push(`  Use get_sub_goal_detail(chain_id, sub_goal_id) for full objective/learnings.`);
+
+		const recentRecords = chain.recordSpace.slice(-8);
 		if (recentRecords.length > 0) {
-			lines.push(`\nRecent record space (${recentRecords.length} entries since last mutation):`);
-			for (const r of recentRecords.slice(-10)) {
-				lines.push(`  [${r.type}] ${r.details}`);
-				if (r.learnings?.length) {
-					r.learnings.forEach((l) => lines.push(`    → ${l}`));
-				}
+			lines.push(`\nRecent record space:`);
+			for (const r of recentRecords) {
+				lines.push(`  [${r.type}] ${this.summarizeText(r.details, 220)}`);
 			}
 		}
 
-		return lines.join("\n");
+		return this.summarizeText(lines.join("\n"), GoalChainManager.INFERENCE_CONTEXT_CHARS);
 	}
 
 	/**
@@ -785,9 +979,13 @@ export class GoalChainManager {
 			learnings,
 		});
 
-		// Keep record space manageable
+		// Keep record space manageable. Detailed old sub-goal data remains lookupable.
 		if (chain.recordSpace.length > 100) {
 			chain.recordSpace = chain.recordSpace.slice(-50);
+		}
+
+		if (this.getContextMetrics(chain).needsCompaction) {
+			this.compactChain(chain);
 		}
 	}
 
@@ -796,6 +994,44 @@ export class GoalChainManager {
 	 */
 	getGoalChain(chainId: string): GoalChain | null {
 		return this.chains.get(chainId) || null;
+	}
+
+	/**
+	 * Get detailed cold-memory information for one sub-goal.
+	 */
+	getSubGoalDetail(chainId: string, subGoalId: string): string {
+		const chain = this.chains.get(chainId);
+		if (!chain) {
+			throw new Error(`Goal chain ${chainId} not found`);
+		}
+		const resolvedId = this.resolveSubGoalId(chain, subGoalId);
+		const subGoal = resolvedId ? chain.subGoals.find((sg) => sg.id === resolvedId) : null;
+		if (!subGoal) {
+			throw new Error(`Sub-goal ${subGoalId} not found in chain ${chainId}`);
+		}
+
+		const records = chain.recordSpace.filter((record) => record.goalId === subGoal.id);
+		const lines = [
+			`SUB-GOAL DETAIL: ${subGoal.id}`,
+			`Chain: ${chain.id}`,
+			`Status: ${subGoal.status.toUpperCase()}`,
+			`Generation: ${subGoal.generation}`,
+			`Created: ${new Date(subGoal.createdAt).toLocaleString()}`,
+		];
+		if (subGoal.completedAt) {
+			lines.push(`Completed: ${new Date(subGoal.completedAt).toLocaleString()}`);
+		}
+		lines.push("", "OBJECTIVE:", subGoal.objective);
+		if (records.length > 0) {
+			lines.push("", `RECORDS (${records.length}):`);
+			for (const record of records) {
+				lines.push(`- [${record.type}] ${new Date(record.timestamp).toLocaleString()} -> ${record.details}`);
+				if (record.learnings?.length) {
+					record.learnings.forEach((learning) => lines.push(`  -> ${learning}`));
+				}
+			}
+		}
+		return lines.join("\n");
 	}
 
 	/**
@@ -819,7 +1055,8 @@ export class GoalChainManager {
 	formatGoalChain(chain: GoalChain): string {
 		const createdAt = new Date(chain.createdAt).toLocaleString();
 		const lastMutation = new Date(chain.lastMutationAt).toLocaleString();
-		const toSafeText = (value: unknown) => {
+		const summary = this.ensureContextSummary(chain);
+		const toSafeText = (value: unknown, maxLength = GoalChainManager.SUB_GOAL_SUMMARY_CHARS) => {
 			if (typeof value !== "string") {
 				return "<invalid text>";
 			}
@@ -827,7 +1064,7 @@ export class GoalChainManager {
 			if (!trimmed) {
 				return "<empty>";
 			}
-			return trimmed.replace(/\s+/g, " ");
+			return this.summarizeText(trimmed, maxLength);
 		};
 
 		const lines = [
@@ -837,9 +1074,10 @@ export class GoalChainManager {
 			`Created: ${createdAt}`,
 			`Last Mutation: ${lastMutation}`,
 			`Sub-Goals: ${chain.subGoals.length}`,
-			``,
+			`Context: ${summary.metrics.needsCompaction ? "COMPACTED" : "WITHIN BUDGET"} · ${summary.archivedSubGoalIds.length} archived · ${summary.metrics.oversizedSubGoals} oversized`,
+			``, 
 			`PRIMARY GOAL:`,
-			`${toSafeText(chain.primaryGoal)}`,
+			`${toSafeText(chain.primaryGoal, 600)}`,
 			``,
 			`REPRODUCTIVE CLAUSE (v${chain.reproductiveClause.version}):`,
 			`  Updated: ${new Date(chain.reproductiveClause.lifelineTimestamp).toLocaleString()}`,
@@ -888,9 +1126,9 @@ export class GoalChainManager {
 						: latest,
 				);
 				lines.push(
-					`  (${archivedCompleted.length} older completed sub-goal(s) summarized to preserve context; latest archived completion: ${new Date(
+					`  (${archivedCompleted.length} older completed sub-goal(s) summarized; latest archived completion: ${new Date(
 						latestArchived.completedAt || latestArchived.createdAt,
-					).toLocaleString()})`,
+					).toLocaleString()}; use get_sub_goal_detail for full text)`,
 				);
 			}
 
@@ -900,10 +1138,15 @@ export class GoalChainManager {
 				}
 
 				const inferred = subGoal.inferredFromRecord ? " [inferred]" : "";
+				const objectiveLimit = subGoal.status === "active"
+					? GoalChainManager.ACTIVE_SUB_GOAL_DETAIL_CHARS
+					: GoalChainManager.SUB_GOAL_SUMMARY_CHARS;
+				const detailHint = subGoal.objective.length > objectiveLimit ? " (detail lookup available)" : "";
 				lines.push(
 					`  [${subGoal.id}] ${index + 1}. [${subGoal.status.toUpperCase()}]${inferred} Gen ${subGoal.generation} - ${toSafeText(
 						subGoal.objective,
-					)}`,
+						objectiveLimit,
+					)}${detailHint}`,
 				);
 				if (subGoal.tokenBudget) {
 					const percent = subGoal.tokensUsed
