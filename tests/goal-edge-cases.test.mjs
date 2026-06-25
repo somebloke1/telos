@@ -732,3 +732,50 @@ test("GoalChainManager async evolution skips mutation when distiller returns no 
 	assert.equal(chain.reproductiveClause.version, 1);
 	assert.ok(chain.recordSpace.some((entry) => entry.type === "distillation_skipped"));
 });
+
+test("GoalManager lists predefined objective templates", () => {
+	const gm = new GoalManager();
+	const templates = gm.listTemplates();
+	assert.deepEqual(
+		templates.map((template) => template.id),
+		["development", "testing", "documentation", "refactoring"],
+	);
+	assert.ok(templates.every((template) => template.description && template.objective));
+});
+
+test("GoalManager finds templates by id or case-insensitive name", () => {
+	const gm = new GoalManager();
+	assert.equal(gm.getTemplate("testing").name, "Testing");
+	assert.equal(gm.getTemplate("Documentation").id, "documentation");
+	assert.equal(gm.getTemplate("unknown"), null);
+});
+
+test("GoalManager renders template objective with optional focus", () => {
+	const gm = new GoalManager();
+	const objective = gm.renderTemplateObjective("refactoring", "Extract parser helpers");
+	assert.match(objective, /Refactor safely/);
+	assert.match(objective, /Focus:\nExtract parser helpers/);
+	assert.doesNotMatch(gm.renderTemplateObjective("development"), /Focus:/);
+});
+
+test("GoalManager creates goals from predefined templates", () => {
+	const gm = new GoalManager();
+	const goal = gm.createGoalFromTemplate("testing", "Cover edge cases", 1200);
+	assert.equal(goal.status, "active");
+	assert.equal(goal.tokenBudget, 1200);
+	assert.match(goal.objective, /Improve test coverage/);
+	assert.match(goal.objective, /Cover edge cases/);
+});
+
+test("GoalManager rejects unknown templates", () => {
+	const gm = new GoalManager();
+	assert.throws(() => gm.renderTemplateObjective("nonexistent"), /Unknown goal template/);
+	assert.throws(() => gm.createGoalFromTemplate("nonexistent"), /Unknown goal template/);
+});
+
+test("GoalManager stores oversized rendered template objectives transparently", () => {
+	const gm = new GoalManager();
+	const goal = gm.createGoalFromTemplate("documentation", "x".repeat(4100));
+	assert.ok(goal.objective.startsWith("file:"));
+	assert.ok(existsSync(join(process.cwd(), "GOAL.md")));
+});

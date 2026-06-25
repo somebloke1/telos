@@ -29,9 +29,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added configurable curator surface: `TELOS_CURATOR_ENABLED`, `TELOS_CURATOR_PROVIDER`, `TELOS_CURATOR_HOST`, `TELOS_CURATOR_MODEL`, `TELOS_CURATOR_TOP_K`, `TELOS_CURATOR_TIMEOUT_MS`, `TELOS_CURATOR_ANCHOR_FILES`
   - Added provider-neutral distiller surface: `TELOS_DISTILLER_ENABLED`, `TELOS_DISTILLER_PROVIDER`, `TELOS_DISTILLER_MODEL`, `TELOS_DISTILLER_BASE_URL`, `TELOS_DISTILLER_API_KEY_ENV`, `TELOS_DISTILLER_TIMEOUT_MS`, `TELOS_DISTILLER_MAX_PRINCIPLES`
   - Default curator model is `snowflake-arctic-embed2:latest`; default distiller model is `litellm/codex/gpt-5.4` behind an OpenAI-compatible endpoint
+- **Objective Templates** (`src/goal-manager.ts`, `src/index.ts`)
+  - Added predefined development, testing, documentation, and refactoring templates
+  - Added `/goal template list` and `/goal template use <id> [focus]` commands
+  - Template-created goals reuse transparent large-objective storage and normal continuation behavior
 - **Expanded Test Suite**
-  - 163 tests total
-  - Added tests for context entropy metrics, compacted warm memory, bounded chain rendering, compact inference objectives, sub-goal detail lookup, config resolution, and no-hidden-substitute distillation behavior
+  - 169 tests total
+  - Added tests for context entropy metrics, compacted warm memory, bounded chain rendering, compact inference objectives, sub-goal detail lookup, config resolution, no-hidden-substitute distillation behavior, and objective templates
 
 ### Added (v0.3.0 - In Development)
 - **TUI Footer Enhancements** (`src/tui/footer.ts`)

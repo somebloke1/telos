@@ -25,6 +25,8 @@ Telos adds persistent goal tracking to your Pi sessions. Goals help you stay foc
 - `/goal resume` - Resume a paused goal
 - `/goal clear` - Remove the current goal
 - `/goal edit` - Open an editor to modify the current goal (large objectives stored transparently)
+- `/goal template list` - List predefined objective templates
+- `/goal template use <id> [focus]` - Create a goal from a predefined template with optional focus details
 
 #### LLM Tools
 
@@ -276,7 +278,7 @@ pi --no-extensions -e ./src/index.ts
 
 `local-embedder:latest` is also suitable when it aliases Snowflake locally. `nomic-embed-text:v1.5` is a lightweight alternative embedding model. `qwen3-embedding:8b` may provide higher semantic discrimination at higher runtime cost.
 
-The current implementation records curator configuration in compaction summaries. Distillation is used only when explicitly configured; otherwise automatic reproductive-clause mutation is skipped rather than approximated.
+The current implementation records curator configuration in compaction summaries. Distillation is used only when explicitly configured; otherwise automatic reproductive-clause mutation is skipped rather than approximated. The intended embedder/curator cooperation model is specified in `docs/goal-chain-curator-distiller-spec.md`.
 
 ## Usage
 
@@ -571,6 +573,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 - **[EXAMPLES.md](EXAMPLES.md)** - Real-world usage examples
 - **[docs/design.md](docs/design.md)** - Architecture and design decisions
 - **[docs/goal-chain-technical-summary.md](docs/goal-chain-technical-summary.md)** - Goal chain technical details
+- **[docs/goal-chain-curator-distiller-spec.md](docs/goal-chain-curator-distiller-spec.md)** - Intended embedder/curator and distiller cooperation model
 - **[ROADMAP.md](ROADMAP.md)** - Development roadmap
 - **[CHANGELOG.md](CHANGELOG.md)** - Version history
 
@@ -584,6 +587,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 /goal resume           Resume goal  
 /goal clear            Clear goal
 /goal edit             Edit current goal in editor
+/goal template list    List objective templates
+/goal template use <id> [focus]  Create goal from a template
 ```
 
 ### Goal Chains

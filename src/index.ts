@@ -638,7 +638,7 @@ async function handleGoalCommand(
 	if (!trimmed) {
 		if (!goal) {
 			ctx.ui.notify(
-				"No active goal. Usage: /goal <objective> | edit | pause | resume | clear",
+				"No active goal. Usage: /goal <objective> | template list | template use <id> [focus] | edit | pause | resume | clear",
 				"info",
 			);
 			return;
@@ -655,10 +655,64 @@ async function handleGoalCommand(
 	switch (command) {
 		case "help":
 			ctx.ui.notify(
-				"Usage: /goal <objective> | edit [--file] | status | show | list | handoff | pause | resume | clear",
+				"Usage: /goal <objective> | template list | template use <id> [focus] | edit | status | show | list | handoff | pause | resume | clear",
 				"info",
 			);
 			break;
+
+		case "templates":
+		case "template": {
+			const templateCommand = parts[1]?.toLowerCase() || "list";
+			if (templateCommand === "list" || templateCommand === "show") {
+				const templates = goalManager.listTemplates();
+				ctx.ui.notify(
+					`Available goal templates:\n\n${templates.map((template) => `- ${template.id}: ${template.description}`).join("\n")}\n\nUse /goal template use <id> [focus]`,
+					"info",
+				);
+				break;
+			}
+
+			if (templateCommand !== "use") {
+				ctx.ui.notify("Usage: /goal template list | /goal template use <id> [focus]", "error");
+				break;
+			}
+
+			const templateId = parts[2];
+			if (!templateId) {
+				ctx.ui.notify("Usage: /goal template use <id> [focus]", "error");
+				break;
+			}
+
+			const focus = parts.slice(3).join(" ");
+			let objective: string;
+			try {
+				objective = goalManager.renderTemplateObjective(templateId, focus);
+			} catch (error: any) {
+				ctx.ui.notify(`${error?.message || String(error)}. Use /goal template list to see available templates.`, "error");
+				break;
+			}
+
+			if (goal && goal.status !== "complete") {
+				const currentObjective = goalManager.resolveFileReference(goal.objective);
+				const confirmed = await ctx.ui.confirm(
+					"Replace existing goal?",
+					`Current goal: ${currentObjective.slice(0, 100)}...\n\nReplace with template '${templateId}': ${objective.slice(0, 100)}...`,
+				);
+				if (!confirmed) {
+					ctx.ui.notify("Goal template cancelled", "info");
+					break;
+				}
+				goalManager.clearGoal();
+			}
+
+			goalManager.createGoalFromTemplate(templateId, focus);
+			await goalManager.persistToSession(pi);
+			goalContinuation.enableContinuation();
+			renderGoalFooter(ctx, goalManager, goalChainManager);
+			ctx.ui.notify(`Goal set from '${templateId}' template; starting agent continuation`, "info");
+			await goalContinuation.triggerNow(ctx);
+			break;
+		}
 
 		case "status":
 		case "show":
@@ -763,6 +817,7 @@ async function handleGoalCommand(
 					ctx.ui.notify("Goal replacement cancelled", "info");
 					return;
 				}
+				goalManager.clearGoal();
 			}
 
 			// Create the new goal

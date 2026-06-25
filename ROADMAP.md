@@ -114,11 +114,12 @@ This document outlines the planned development roadmap for Telos.
   - `GoalManager.loadGoalFromFile()` auto-detects large content
   - User interacts with `/goal <objective>`, `/goal edit`, `/goal show` — no file awareness needed
 
-- [ ] **Objective Templates**
-  - Predefined goal templates
-  - Template categories (development, testing, documentation)
-  - Custom template creation
-  - Template management commands
+- [x] **Objective Templates** (v0.4.0-alpha)
+  - Predefined goal templates in `GoalManager`: development, testing, documentation, refactoring
+  - `/goal template list` command
+  - `/goal template use <id> [focus]` command with replacement confirmation and continuation trigger
+  - Template rendering preserves transparent large-objective storage through existing `GOAL.md` handling
+  - Custom template creation remains future work
 
 - [ ] **Reproductive Clause Editing**
   - Edit primary goal conservatively
@@ -143,6 +144,7 @@ This document outlines the planned development roadmap for Telos.
   - `/goalchain detail <id> <sub_goal_id>` and `get_sub_goal_detail` tool for cold-memory lookup
   - Centralized `TelosConfig` abstraction for future migration of static values into configuration
   - Configurable curator metadata path for local Ollama/Snowflake embeddings (`TELOS_CURATOR_*`)
+  - Curator/distiller cooperation spec recorded in `docs/goal-chain-curator-distiller-spec.md` without depending on transient goal-chain IDs
   - Async provider-neutral distiller path for reproductive-clause mutation (`TELOS_DISTILLER_*`)
   - `ChatCompletionGoalChainDistiller` supports OpenAI-compatible endpoints such as LiteLLM without naming the architecture after a provider target
   - Automatic mutation is skipped and recorded when no equivalent distiller is configured; no deterministic/mock LLM substitute is used

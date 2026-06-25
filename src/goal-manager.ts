@@ -23,9 +23,42 @@ export interface Goal {
 	updatedAt: number;
 }
 
+export interface GoalTemplate {
+	id: string;
+	name: string;
+	description: string;
+	objective: string;
+}
+
 const MAX_OBJECTIVE_CHARS = 4000;
 const FILE_OBJECTIVE_PREFIX = "file:";
 const TERMINAL_STATUSES: GoalStatus[] = ["complete", "blocked", "budget_limited"];
+const DEFAULT_GOAL_TEMPLATES: GoalTemplate[] = [
+	{
+		id: "development",
+		name: "Development",
+		description: "Plan, implement, validate, and document a feature or product change.",
+		objective: "Implement a development task methodically: clarify requirements, inspect the existing code, make incremental changes, add or update tests, validate behavior, update documentation when needed, and report risks or follow-up work.",
+	},
+	{
+		id: "testing",
+		name: "Testing",
+		description: "Expand or repair test coverage with clear validation criteria.",
+		objective: "Improve test coverage methodically: identify the behavior under test, inspect existing tests and gaps, add focused unit/integration coverage, run the relevant test suite, and document remaining risks or untested cases.",
+	},
+	{
+		id: "documentation",
+		name: "Documentation",
+		description: "Update durable docs with accurate behavior, examples, and constraints.",
+		objective: "Update documentation methodically: verify the implemented behavior from source, revise durable docs with stable design rationale and user-facing examples, avoid transient session-local identifiers, and validate links or references where practical.",
+	},
+	{
+		id: "refactoring",
+		name: "Refactoring",
+		description: "Improve structure without changing externally visible behavior.",
+		objective: "Refactor safely and incrementally: characterize current behavior, isolate the structural improvement, preserve public contracts, update tests only where behavior is intentionally clarified, run validation, and summarize any migration risks.",
+	},
+];
 
 /**
  * GoalManager handles all goal state operations
@@ -33,6 +66,7 @@ const TERMINAL_STATUSES: GoalStatus[] = ["complete", "blocked", "budget_limited"
 export class GoalManager {
 	private goal: Goal | null = null;
 	private nextGoalId = 1;
+	private readonly templates: GoalTemplate[] = DEFAULT_GOAL_TEMPLATES;
 
 	/**
 	 * Create a new goal.
@@ -68,6 +102,50 @@ export class GoalManager {
 		};
 
 		return this.goal;
+	}
+
+	/**
+	 * List available objective templates.
+	 */
+	listTemplates(): GoalTemplate[] {
+		return this.templates.map((template) => ({ ...template }));
+	}
+
+	/**
+	 * Find an objective template by id or case-insensitive name.
+	 */
+	getTemplate(templateIdOrName: string): GoalTemplate | null {
+		const normalized = templateIdOrName.trim().toLowerCase();
+		if (!normalized) return null;
+		const template = this.templates.find((candidate) => (
+			candidate.id.toLowerCase() === normalized ||
+			candidate.name.toLowerCase() === normalized
+		));
+		return template ? { ...template } : null;
+	}
+
+	/**
+	 * Render a template objective with optional user-provided focus details.
+	 */
+	renderTemplateObjective(templateIdOrName: string, focus?: string): string {
+		const template = this.getTemplate(templateIdOrName);
+		if (!template) {
+			throw new Error(`Unknown goal template: ${templateIdOrName}`);
+		}
+
+		const trimmedFocus = focus?.trim();
+		if (!trimmedFocus) {
+			return template.objective;
+		}
+
+		return `${template.objective}\n\nFocus:\n${trimmedFocus}`;
+	}
+
+	/**
+	 * Create a goal from a predefined template.
+	 */
+	createGoalFromTemplate(templateIdOrName: string, focus?: string, tokenBudget?: number): Goal {
+		return this.createGoal(this.renderTemplateObjective(templateIdOrName, focus), tokenBudget);
 	}
 
 	/**
