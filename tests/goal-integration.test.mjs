@@ -3,8 +3,23 @@ import test from "node:test";
 import { GoalChainManager } from "../src/goal-chain.js";
 import { GoalManager } from "../src/goal-manager.js";
 
-test("Full goal chain lifecycle: create → add → complete → mutate → infer", () => {
-	const manager = new GoalChainManager();
+function createDistillingManager() {
+	return new GoalChainManager(
+		{ goalChain: { distiller: { enabled: true, provider: "openai-compatible" } } },
+		{
+			async distill(input) {
+				return {
+					principles: [...input.reproductiveClause.essentialPrinciples, "Use distilled lifecycle evidence"],
+					reason: "Lifecycle test distiller mutation",
+					confidence: 0.86,
+				};
+			},
+		},
+	);
+}
+
+test("Full goal chain lifecycle: create → add → complete → async distill → infer", async () => {
+	const manager = createDistillingManager();
 
 	// Step 1: Create chain
 	const chain = manager.createGoalChain(
@@ -17,19 +32,18 @@ test("Full goal chain lifecycle: create → add → complete → mutate → infe
 	assert.equal(chain.subGoals.length, 3);
 
 	// Step 2: Complete first sub-goal with learnings
-	manager.updateSubGoalStatus(chain.id, "1", "complete", [
+	await manager.updateSubGoalStatusAsync(chain.id, "1", "complete", [
 		"Architecture should use modular design",
 	]);
 	assert.equal(chain.subGoals[0].status, "complete");
 
 	// Step 3: Complete second sub-goal
-	manager.updateSubGoalStatus(chain.id, "2", "complete", [
+	await manager.updateSubGoalStatusAsync(chain.id, "2", "complete", [
 		"Modular design reduces coupling",
 	]);
 	assert.equal(chain.subGoals[1].status, "complete");
 
-	// Step 4: After 2 completed goals with learnings, evolution should trigger
-	// (evolveChain is called automatically when shouldEvolveChain returns true)
+	// Step 4: After 2 completed goals with learnings, async distillation should trigger mutation
 	assert.equal(chain.currentGeneration, 2, "Should have evolved to generation 2");
 	assert.equal(chain.reproductiveClause.version, 2, "Should have evolved clause version");
 

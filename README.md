@@ -231,7 +231,10 @@ Telos uses a centralized app-level configuration module (`src/config.ts`) so sta
 
 ### Goal Chain Curator Configuration
 
-The first configurable area is the goal-chain cognitive metabolism/curator layer. It is optional and defaults to deterministic local compaction with no model calls.
+The goal-chain cognitive metabolism layer has two separately configurable roles:
+
+- **Curator**: future embedding-backed semantic selection over record space. Current compaction remains local and deterministic when curator is disabled.
+- **Distiller**: async model-backed reproductive-clause principle extraction. If no equivalent distiller is configured or a distiller fails, Telos skips automatic mutation and records the skip; it does not substitute keyword or deterministic principle extraction.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -242,6 +245,13 @@ The first configurable area is the goal-chain cognitive metabolism/curator layer
 | `TELOS_CURATOR_TOP_K` | `8` | Number of semantically relevant records/clusters to retain |
 | `TELOS_CURATOR_TIMEOUT_MS` | `5000` | Curator request timeout budget |
 | `TELOS_CURATOR_ANCHOR_FILES` | `ROADMAP.md,README.md` | Stable semantic anchors for future embedding-backed curation |
+| `TELOS_DISTILLER_ENABLED` | `false` | Enable async model-backed reproductive-clause distillation |
+| `TELOS_DISTILLER_PROVIDER` | `none` | Distiller provider (`none` or `openai-compatible`; `litellm` accepted as alias) |
+| `TELOS_DISTILLER_MODEL` | `litellm/codex/gpt-5.4` | Reasoning model for principle extraction |
+| `TELOS_DISTILLER_BASE_URL` | unset | OpenAI-compatible chat-completions base URL, e.g. LiteLLM gateway |
+| `TELOS_DISTILLER_API_KEY_ENV` | `OPENAI_API_KEY` | Environment variable containing the distiller API key |
+| `TELOS_DISTILLER_TIMEOUT_MS` | `30000` | Distiller request timeout budget |
+| `TELOS_DISTILLER_MAX_PRINCIPLES` | `8` | Maximum reproductive-clause principles retained |
 
 Recommended local embedding model:
 
@@ -253,9 +263,20 @@ TELOS_CURATOR_MODEL=snowflake-arctic-embed2:latest \
 pi --no-extensions -e ./src/index.ts
 ```
 
-`local-embedder:latest` is also suitable when it aliases Snowflake locally. `nomic-embed-text:v1.5` is a lightweight fallback. `qwen3-embedding:8b` may provide higher semantic discrimination at higher runtime cost.
+Recommended distiller model through an OpenAI-compatible/LiteLLM target:
 
-The current implementation records curator configuration in compaction summaries and keeps deterministic compaction as the default fallback. Future work can add live Ollama embedding calls behind the same config surface without changing tool contracts.
+```bash
+TELOS_DISTILLER_ENABLED=true \
+TELOS_DISTILLER_PROVIDER=openai-compatible \
+TELOS_DISTILLER_MODEL=litellm/codex/gpt-5.4 \
+TELOS_DISTILLER_BASE_URL=http://127.0.0.1:4000 \
+TELOS_DISTILLER_API_KEY_ENV=OPENAI_API_KEY \
+pi --no-extensions -e ./src/index.ts
+```
+
+`local-embedder:latest` is also suitable when it aliases Snowflake locally. `nomic-embed-text:v1.5` is a lightweight alternative embedding model. `qwen3-embedding:8b` may provide higher semantic discrimination at higher runtime cost.
+
+The current implementation records curator configuration in compaction summaries. Distillation is used only when explicitly configured; otherwise automatic reproductive-clause mutation is skipped rather than approximated.
 
 ## Usage
 
@@ -528,7 +549,7 @@ See `docs/research/codex_goal_feature_research.md` for detailed research notes o
 - Simplified continuation logic (no complex rollout/rollback)
 - Goals stored in session entries rather than SQLite
 - Goal chains are a Telos-specific feature not present in Codex
-- Evolutionary mutations are simplified compared to full recursive self-improvement
+- Evolutionary mutations require a configured async distiller for automatic principle extraction; without one, mutation is skipped rather than approximated
 
 ## Contributing
 

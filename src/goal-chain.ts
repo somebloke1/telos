@@ -16,6 +16,26 @@ import {
 	type PartialTelosConfig,
 } from "./config.js";
 
+export interface GoalChainDistillationInput {
+	chainId: string;
+	primaryGoal: string;
+	reproductiveClause: ReproductiveClause;
+	contextSummary: GoalChainContextSummary;
+	freshLearnings: string[];
+	completedGoalCount: number;
+	blockedGoalCount: number;
+}
+
+export interface GoalChainDistillationResult {
+	principles: string[];
+	reason: string;
+	confidence: number;
+}
+
+export interface GoalChainDistiller {
+	distill(input: GoalChainDistillationInput, config: TelosConfig): Promise<GoalChainDistillationResult>;
+}
+
 export interface ReproductiveClause {
 	primaryGoal: string;
 	essentialPrinciples: string[];
@@ -83,7 +103,7 @@ export interface GoalChain {
 }
 
 export interface RecordSpaceEntry {
-	type: "goal_created" | "goal_updated" | "goal_completed" | "goal_blocked" | "goal_mutated" | "inference";
+	type: "goal_created" | "goal_updated" | "goal_completed" | "goal_blocked" | "goal_mutated" | "inference" | "distillation_skipped";
 	goalId: string;
 	timestamp: number;
 	details: string;
@@ -142,9 +162,11 @@ export class GoalChainManager {
 	private chainIdCounter = 1;
 	private subGoalIdCounter = 1;
 	private readonly config: TelosConfig;
+	private readonly distiller?: GoalChainDistiller;
 
-	constructor(config?: PartialTelosConfig) {
+	constructor(config?: PartialTelosConfig, distiller?: GoalChainDistiller) {
 		this.config = mergeTelosConfig(config);
+		this.distiller = distiller;
 	}
 
 	getConfig(): TelosConfig {
@@ -442,13 +464,23 @@ export class GoalChainManager {
 			evolutionaryLearnings,
 		);
 
-		// Check if we should evolve the chain.
-		// Active status updates are progress bookkeeping, not completed evidence.
-		if ((status === "complete" || status === "blocked") && this.shouldEvolveChain(chain)) {
-			this.evolveChain(chainId);
-		}
-
 		return subGoal;
+	}
+
+	/**
+	 * Update sub-goal status and, when appropriate, run async distillation-gated evolution.
+	 */
+	async updateSubGoalStatusAsync(
+		chainId: string,
+		subGoalId: string,
+		status: "active" | "complete" | "blocked",
+		learnings?: string[],
+	): Promise<{ subGoal: SubGoal; mutation: GoalChainMutation | null }> {
+		const subGoal = this.updateSubGoalStatus(chainId, subGoalId, status, learnings);
+		const mutation = status === "complete" || status === "blocked"
+			? await this.maybeEvolveChainAsync(chainId)
+			: null;
+		return { subGoal, mutation };
 	}
 
 	/**
@@ -519,44 +551,77 @@ export class GoalChainManager {
 	}
 
 	/**
-	 * Evolve the chain based on record space and learnings
+	 * Evolve the chain through an async, configured distiller. No hidden deterministic substitute.
 	 */
-	private evolveChain(chainId: string): void {
+	async maybeEvolveChainAsync(chainId: string): Promise<GoalChainMutation | null> {
 		const chain = this.chains.get(chainId);
-		if (!chain) {
-			return;
+		if (!chain || !this.shouldEvolveChain(chain)) {
+			return null;
 		}
-
-		chain.status = "evolving";
-
-		// Inference happens here - would be LLM-generated in practice
-		// For now, we'll infer based on completed sub-goals and learnings
 
 		const completedGoals = chain.subGoals.filter((sg) => sg.status === "complete");
 		const blockedGoals = chain.subGoals.filter((sg) => sg.status === "blocked");
-
-		// Extract only fresh completion/blocking learnings since the last mutation.
 		const lastMutationIndex = this.findLastRecordIndex(chain.recordSpace, (entry) => entry.type === "goal_mutated");
-		const learnings = chain.recordSpace
+		const freshLearnings = chain.recordSpace
 			.slice(lastMutationIndex + 1)
 			.filter((entry) => entry.type === "goal_completed" || entry.type === "goal_blocked")
 			.flatMap((entry) => entry.learnings || []);
 
-		// Conservative mutation based on learnings
-		if (learnings.length > 0 && completedGoals.length >= 2) {
-			// Only mutate if we have sufficient learnings
-			const newPrinciples = this.refinePrinciples(chain.reproductiveClause.essentialPrinciples, learnings);
-
-			this.mutateReproductiveClause(
+		if (!this.config.goalChain.distiller.enabled || !this.distiller) {
+			this.addToRecordSpace(
+				chain,
+				"distillation_skipped",
 				chainId,
-				chain.reproductiveClause.primaryGoal,
-				newPrinciples,
-				`Evolution based on ${learnings.length} learnings from ${completedGoals.length} completed goals`,
-				0.8,
+				"Automatic reproductive-clause mutation skipped: no configured equivalent distiller is available",
 			);
+			return null;
 		}
 
-		chain.status = "active";
+		const previousStatus = chain.status;
+		chain.status = "evolving";
+		try {
+			const contextSummary = this.compactChain(chain);
+			const result = await this.distiller.distill(
+				{
+					chainId,
+					primaryGoal: chain.primaryGoal,
+					reproductiveClause: chain.reproductiveClause,
+					contextSummary,
+					freshLearnings,
+					completedGoalCount: completedGoals.length,
+					blockedGoalCount: blockedGoals.length,
+				},
+				this.config,
+			);
+			const distilledPrinciples = this.dedupeTexts(result.principles).slice(0, this.config.goalChain.distiller.maxPrinciples);
+			if (distilledPrinciples.length === 0) {
+				this.addToRecordSpace(
+					chain,
+					"distillation_skipped",
+					chainId,
+					"Automatic reproductive-clause mutation skipped: distiller returned no validated principles",
+				);
+				return null;
+			}
+			return this.mutateReproductiveClause(
+				chainId,
+				chain.reproductiveClause.primaryGoal,
+				distilledPrinciples,
+				result.reason || `Distilled ${freshLearnings.length} fresh learning(s) through ${this.config.goalChain.distiller.model}`,
+				Number.isFinite(result.confidence) ? Math.max(0, Math.min(1, result.confidence)) : 0.7,
+			);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			this.addToRecordSpace(
+				chain,
+				"distillation_skipped",
+				chainId,
+				`Automatic reproductive-clause mutation skipped: distiller failed (${message})`,
+			);
+			return null;
+		} finally {
+			chain.status = previousStatus === "evolving" ? "active" : previousStatus;
+		}
 	}
 
 	/**
@@ -577,24 +642,6 @@ export class GoalChainManager {
 					Boolean(entry.learnings && entry.learnings.length > 0),
 			)
 		);
-	}
-
-	/**
-	 * Refine principles based on learnings
-	 */
-	private refinePrinciples(currentPrinciples: string[], learnings: string[]): string[] {
-		// Conservative refinement - keep existing principles and add derived ones.
-		// Dedupe while preserving order so repeated evolution does not bloat the lifeline.
-		const refinedPrinciples = [...currentPrinciples];
-
-		// Extract new principles from learnings (simplified - would be LLM-generated)
-		const learningThemes = learnings
-			.filter((learning) => learning.includes("should") || learning.includes("must"))
-			.slice(0, 2);
-
-		refinedPrinciples.push(...learningThemes);
-
-		return this.dedupeTexts(refinedPrinciples).slice(0, 8);
 	}
 
 	private dedupeTexts(values: string[]): string[] {

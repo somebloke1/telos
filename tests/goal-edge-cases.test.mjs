@@ -5,6 +5,21 @@ import { join } from "node:path";
 import { GoalChainManager } from "../src/goal-chain.js";
 import { GoalManager } from "../src/goal-manager.js";
 
+function createDistillingManager(principles = ["Preserve original principles", "Use distilled evidence from record space"]) {
+	return new GoalChainManager(
+		{ goalChain: { distiller: { enabled: true, provider: "openai-compatible" } } },
+		{
+			async distill(input) {
+				return {
+					principles: [...input.reproductiveClause.essentialPrinciples, ...principles],
+					reason: "Mock equivalent distiller produced principles for test",
+					confidence: 0.82,
+				};
+			},
+		},
+	);
+}
+
 // ===================== GoalManager Edge Cases =====================
 
 test("GoalManager rejects empty objective", () => {
@@ -317,20 +332,20 @@ test("GoalChainManager evolveChain with insufficient learnings does not mutate",
 	assert.equal(chain.reproductiveClause.version, 1);
 });
 
-test("GoalChainManager evolveChain with blocked goal and learnings triggers evolution", () => {
-	const manager = new GoalChainManager();
+test("GoalChainManager async evolution with blocked goal and learnings uses configured distiller", async () => {
+	const manager = createDistillingManager();
 	const chain = manager.createGoalChain("Task", undefined, ["One", "Two", "Three"]);
 
 	// Complete first two with learnings (required threshold for evolution)
-	manager.updateSubGoalStatus(chain.id, "1", "complete", [
-		"Should use modular design",
+	await manager.updateSubGoalStatusAsync(chain.id, "1", "complete", [
+		"Use modular design",
 	]);
-	manager.updateSubGoalStatus(chain.id, "2", "complete", [
+	await manager.updateSubGoalStatusAsync(chain.id, "2", "complete", [
 		"Modular design reduces coupling",
 	]);
 	// Then block third with learning - triggers another evolution since completedGoals >= 2
-	manager.updateSubGoalStatus(chain.id, "3", "blocked", [
-		"Should use modular design",
+	await manager.updateSubGoalStatusAsync(chain.id, "3", "blocked", [
+		"Use modular design",
 	]);
 
 	assert.ok(
@@ -534,7 +549,7 @@ test("buildInferenceContext includes reproductive clause in context", () => {
 
 // ===================== Concurrent Evolution Trigger Edge Cases =====================
 
-test("GoalChainManager handles rapid consecutive completions without duplicate evolution", () => {
+test("GoalChainManager sync status updates do not perform automatic mutation", () => {
 	const manager = new GoalChainManager();
 	const chain = manager.createGoalChain("Rapid evolution test", undefined, [
 		"Step 1",
@@ -542,28 +557,12 @@ test("GoalChainManager handles rapid consecutive completions without duplicate e
 		"Step 3",
 	]);
 
-	// Complete first two with learnings - triggers first evolution
-	manager.updateSubGoalStatus(chain.id, "1", "complete", [
-		"Learning A",
-	]);
-	manager.updateSubGoalStatus(chain.id, "2", "complete", [
-		"Learning B",
-	]);
+	manager.updateSubGoalStatus(chain.id, "1", "complete", ["Learning A"]);
+	manager.updateSubGoalStatus(chain.id, "2", "complete", ["Learning B"]);
+	manager.updateSubGoalStatus(chain.id, "3", "complete", ["Learning C"]);
 
-	const genAfterFirst = chain.currentGeneration;
-	const clauseVerAfterFirst = chain.reproductiveClause.version;
-
-	// Complete third with learning - should trigger second evolution
-	manager.updateSubGoalStatus(chain.id, "3", "complete", [
-		"Learning C",
-	]);
-
-	const genAfterSecond = chain.currentGeneration;
-	const clauseVerAfterSecond = chain.reproductiveClause.version;
-
-	// Evolution should have occurred (generation increased)
-	assert.ok(genAfterSecond >= genAfterFirst, `Generation should increase, got ${genAfterFirst} → ${genAfterSecond}`);
-	assert.ok(clauseVerAfterSecond >= clauseVerAfterFirst, `Clause version should increase, got ${clauseVerAfterFirst} → ${clauseVerAfterSecond}`);
+	assert.equal(chain.currentGeneration, 1, "Sync status updates are bookkeeping only");
+	assert.equal(chain.reproductiveClause.version, 1, "Sync path must not fake LLM mutation");
 });
 
 test("GoalChainManager evolution does not trigger on blocked goal without learnings", () => {
@@ -580,8 +579,8 @@ test("GoalChainManager evolution does not trigger on blocked goal without learni
 	assert.equal(chain.reproductiveClause.version, 1, "Clause version should not change");
 });
 
-test("GoalChainManager evolution respects minimum completed goals threshold", () => {
-	const manager = new GoalChainManager();
+test("GoalChainManager async evolution respects minimum completed goals threshold", async () => {
+	const manager = createDistillingManager();
 	const chain = manager.createGoalChain("Min goals test", undefined, [
 		"A",
 		"B",
@@ -589,12 +588,12 @@ test("GoalChainManager evolution respects minimum completed goals threshold", ()
 	]);
 
 	// Only complete 1 goal with learning - should not trigger evolution
-	manager.updateSubGoalStatus(chain.id, "1", "complete", ["Learning"]);
+	await manager.updateSubGoalStatusAsync(chain.id, "1", "complete", ["Learning"]);
 
 	assert.equal(chain.currentGeneration, 1, "Should not evolve with only 1 completed goal");
 
-	// Complete second goal - should now trigger evolution
-	manager.updateSubGoalStatus(chain.id, "2", "complete", ["Learning 2"]);
+	// Complete second goal - should now trigger evolution through configured distiller
+	await manager.updateSubGoalStatusAsync(chain.id, "2", "complete", ["Learning 2"]);
 
 	assert.ok(
 		chain.currentGeneration >= 2,
@@ -602,8 +601,8 @@ test("GoalChainManager evolution respects minimum completed goals threshold", ()
 	);
 });
 
-test("GoalChainManager multiple evolution triggers produce progressive mutations", () => {
-	const manager = new GoalChainManager();
+test("GoalChainManager async evolution triggers progressive distiller mutations", async () => {
+	const manager = createDistillingManager();
 	const chain = manager.createGoalChain("Progressive evolution", undefined, [
 		"A",
 		"B",
@@ -613,20 +612,20 @@ test("GoalChainManager multiple evolution triggers produce progressive mutations
 	]);
 
 	// Complete first 2 with learnings → evolution 1
-	manager.updateSubGoalStatus(chain.id, "1", "complete", ["Learning 1"]);
-	manager.updateSubGoalStatus(chain.id, "2", "complete", ["Learning 2"]);
+	await manager.updateSubGoalStatusAsync(chain.id, "1", "complete", ["Learning 1"]);
+	await manager.updateSubGoalStatusAsync(chain.id, "2", "complete", ["Learning 2"]);
 	const gen1 = chain.currentGeneration;
 
 	// Complete 3rd with learning → evolution 2
-	manager.updateSubGoalStatus(chain.id, "3", "complete", ["Learning 3"]);
+	await manager.updateSubGoalStatusAsync(chain.id, "3", "complete", ["Learning 3"]);
 	const gen2 = chain.currentGeneration;
 
 	// Complete 4th with learning → evolution 3
-	manager.updateSubGoalStatus(chain.id, "4", "complete", ["Learning 4"]);
+	await manager.updateSubGoalStatusAsync(chain.id, "4", "complete", ["Learning 4"]);
 	const gen3 = chain.currentGeneration;
 
 	// Complete 5th with learning → may trigger another evolution
-	manager.updateSubGoalStatus(chain.id, "5", "complete", ["Learning 5"]);
+	await manager.updateSubGoalStatusAsync(chain.id, "5", "complete", ["Learning 5"]);
 	const gen4 = chain.currentGeneration;
 
 	assert.ok(gen2 >= gen1, "Gen should progress after 2nd completion");
@@ -698,4 +697,38 @@ test("GoalChainManager inferSubGoals does not embed full inference context in ob
 	assert.ok(inferred.every((sg) => !sg.objective.includes("Completed sub-goals")));
 	assert.ok(inferred.every((sg) => sg.objective.length < 300));
 	assert.ok(chain.contextSummary?.recentLearnings.length, "Warm memory should hold recent learnings");
+});
+
+test("GoalChainManager async evolution skips mutation when no distiller is configured", async () => {
+	const manager = new GoalChainManager();
+	const chain = manager.createGoalChain("No hidden substitute", undefined, ["One", "Two"]);
+
+	await manager.updateSubGoalStatusAsync(chain.id, "1", "complete", ["Learning one"]);
+	await manager.updateSubGoalStatusAsync(chain.id, "2", "complete", ["Learning two"]);
+
+	assert.equal(chain.currentGeneration, 1, "No configured distiller means no automatic mutation");
+	assert.equal(chain.reproductiveClause.version, 1, "Clause should not mutate via deterministic substitute");
+	assert.ok(
+		chain.recordSpace.some((entry) => entry.type === "distillation_skipped"),
+		"Skipped distillation should be explicit in record space",
+	);
+});
+
+test("GoalChainManager async evolution skips mutation when distiller returns no principles", async () => {
+	const manager = new GoalChainManager(
+		{ goalChain: { distiller: { enabled: true, provider: "openai-compatible" } } },
+		{
+			async distill() {
+				return { principles: [], reason: "No aligned principle", confidence: 0.4 };
+			},
+		},
+	);
+	const chain = manager.createGoalChain("No empty mutations", undefined, ["One", "Two"]);
+
+	await manager.updateSubGoalStatusAsync(chain.id, "1", "complete", ["Learning one"]);
+	await manager.updateSubGoalStatusAsync(chain.id, "2", "complete", ["Learning two"]);
+
+	assert.equal(chain.currentGeneration, 1);
+	assert.equal(chain.reproductiveClause.version, 1);
+	assert.ok(chain.recordSpace.some((entry) => entry.type === "distillation_skipped"));
 });

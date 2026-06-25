@@ -4,11 +4,26 @@ import { GoalManager } from "../src/goal-manager.js";
 import { GoalChainManager } from "../src/goal-chain.js";
 import { renderGoalFooter, renderChainWidget, formatEvolutionInfo, formatSubGoalProgress, STATUS_CODES, CHAIN_STATUS_CODES } from "../src/tui/footer.js";
 
+function createDistillingChainManager() {
+	return new GoalChainManager(
+		{ goalChain: { distiller: { enabled: true, provider: "openai-compatible" } } },
+		{
+			async distill(input) {
+				return {
+					principles: [...input.reproductiveClause.essentialPrinciples, "Distilled integration-test principle"],
+					reason: "Integration test distiller mutation",
+					confidence: 0.84,
+				};
+			},
+		},
+	);
+}
+
 // ===================== Full Integration: Chain Lifecycle with TUI Rendering =====================
 
-test("Full integration: create chain → complete sub-goals with learnings → evolve → infer → render", () => {
+test("Full integration: create chain → complete sub-goals with learnings → async distill → infer → render", async () => {
 	const goalManager = new GoalManager();
-	const chainManager = new GoalChainManager();
+	const chainManager = createDistillingChainManager();
 
 	// Create a goal
 	goalManager.createGoal(
@@ -35,17 +50,17 @@ test("Full integration: create chain → complete sub-goals with learnings → e
 	assert.equal(chain.subGoals.length, 4);
 
 	// Complete sub-goals with learnings to trigger evolution
-	chainManager.updateSubGoalStatus(chain.id, "1", "complete", [
+	await chainManager.updateSubGoalStatusAsync(chain.id, "1", "complete", [
 		"Use dependency injection for plugins",
 		"Plugin architecture allows extensibility",
 	]);
-	chainManager.updateSubGoalStatus(chain.id, "2", "complete", [
+	await chainManager.updateSubGoalStatusAsync(chain.id, "2", "complete", [
 		"Async test support is essential",
 	]);
-	chainManager.updateSubGoalStatus(chain.id, "3", "complete", [
+	await chainManager.updateSubGoalStatusAsync(chain.id, "3", "complete", [
 		"Snapshot testing adds value",
 	]);
-	chainManager.updateSubGoalStatus(chain.id, "4", "complete", [
+	await chainManager.updateSubGoalStatusAsync(chain.id, "4", "complete", [
 		"Auto-generate docs from code",
 	]);
 

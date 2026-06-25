@@ -3,6 +3,21 @@ import test from "node:test";
 import { GoalChainManager } from "../src/goal-chain.js";
 import { truncate, formatSubGoalProgress, formatEvolutionInfo, renderChainWidget, STATUS_CODES, CHAIN_STATUS_CODES, EVOLUTION_SYMBOLS, COLORS, colorize, colorizeStatus, colorizeChainStatus, getStatusColor, STATUS_COLORS, CHAIN_STATUS_COLORS } from "../src/tui/footer.js";
 
+function createDistillingManager() {
+	return new GoalChainManager(
+		{ goalChain: { distiller: { enabled: true, provider: "openai-compatible" } } },
+		{
+			async distill(input) {
+				return {
+					principles: [...input.reproductiveClause.essentialPrinciples, "Use distilled TUI evidence"],
+					reason: "TUI test distiller mutation",
+					confidence: 0.8,
+				};
+			},
+		},
+	);
+}
+
 // ===================== truncate tests =====================
 
 test("truncate preserves short text", () => {
@@ -117,14 +132,14 @@ test("formatEvolutionInfo returns empty for fresh chain", () => {
 	assert.equal(formatEvolutionInfo(chain), "", "Fresh chain should have empty evolution info");
 });
 
-test("formatEvolutionInfo shows clause version after mutation", () => {
-	const manager = new GoalChainManager();
+test("formatEvolutionInfo shows clause version after mutation", async () => {
+	const manager = createDistillingManager();
 	const chain = manager.createGoalChain("Test", undefined, ["A", "B", "C"]);
-	manager.updateSubGoalStatus(chain.id, "1", "complete", ["First learning"]);
-	manager.updateSubGoalStatus(chain.id, "2", "complete", ["Second learning"]);
+	await manager.updateSubGoalStatusAsync(chain.id, "1", "complete", ["First learning"]);
+	await manager.updateSubGoalStatusAsync(chain.id, "2", "complete", ["Second learning"]);
 
 	// Complete third to trigger evolution
-	manager.updateSubGoalStatus(chain.id, "3", "complete", ["Third learning"]);
+	await manager.updateSubGoalStatusAsync(chain.id, "3", "complete", ["Third learning"]);
 
 	const evolution = formatEvolutionInfo(chain);
 	assert.ok(
@@ -133,16 +148,16 @@ test("formatEvolutionInfo shows clause version after mutation", () => {
 	);
 });
 
-test("formatEvolutionInfo shows generation after mutation", () => {
-	const manager = new GoalChainManager();
+test("formatEvolutionInfo shows generation after mutation", async () => {
+	const manager = createDistillingManager();
 	const chain = manager.createGoalChain("Evolution test", undefined, ["A", "B", "C"]);
 
 	// Complete first two with learnings to trigger evolution
-	manager.updateSubGoalStatus(chain.id, "1", "complete", ["First learning"]);
-	manager.updateSubGoalStatus(chain.id, "2", "complete", ["Second learning"]);
+	await manager.updateSubGoalStatusAsync(chain.id, "1", "complete", ["First learning"]);
+	await manager.updateSubGoalStatusAsync(chain.id, "2", "complete", ["Second learning"]);
 
 	// Complete third to trigger another evolution
-	manager.updateSubGoalStatus(chain.id, "3", "complete", ["Third learning"]);
+	await manager.updateSubGoalStatusAsync(chain.id, "3", "complete", ["Third learning"]);
 
 	const evolution = formatEvolutionInfo(chain);
 	assert.ok(

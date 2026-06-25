@@ -143,11 +143,14 @@ This document outlines the planned development roadmap for Telos.
   - `/goalchain detail <id> <sub_goal_id>` and `get_sub_goal_detail` tool for cold-memory lookup
   - Centralized `TelosConfig` abstraction for future migration of static values into configuration
   - Configurable curator metadata path for local Ollama/Snowflake embeddings (`TELOS_CURATOR_*`)
-  - 8 new tests (156 total)
+  - Async provider-neutral distiller path for reproductive-clause mutation (`TELOS_DISTILLER_*`)
+  - `ChatCompletionGoalChainDistiller` supports OpenAI-compatible endpoints such as LiteLLM without naming the architecture after a provider target
+  - Automatic mutation is skipped and recorded when no equivalent distiller is configured; no deterministic/mock LLM substitute is used
+  - 15 new tests (163 total)
 
 ### Documentation
 - [x] Updated README with TUI Integration section
-- [x] Added configuration documentation for curator model/host abstraction
+- [x] Added configuration documentation for curator model/host abstraction and async distiller settings
 - [ ] Goal editing guide
 - [ ] Template documentation
 - [ ] File-based objective examples

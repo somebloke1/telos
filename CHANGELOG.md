@@ -19,13 +19,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added `get_sub_goal_detail` LLM tool for full objective, records, and learnings of a specific sub-goal
   - Added `/goalchain detail <chain_id> <sub_goal_id>` command
   - Added `/goalchain compact <chain_id>` command and `compact_goal_chain` LLM tool for normal maintenance operation
+- **Async Reproductive-Clause Distillation** (`src/goal-chain.ts`, `src/goal-chain-distiller.ts`)
+  - Added provider-neutral `GoalChainDistiller` interface and `ChatCompletionGoalChainDistiller` for OpenAI-compatible chat-completion endpoints
+  - Removed automatic synchronous keyword/pattern principle extraction from sub-goal status updates
+  - Added `updateSubGoalStatusAsync()` and `maybeEvolveChainAsync()` so production evolution is gated by configured async distillation
+  - If no equivalent distiller is configured or a distiller fails, automatic mutation is skipped and recorded as `distillation_skipped`; Telos does not substitute deterministic/mock LLM logic
 - **Centralized Configuration** (`src/config.ts`)
   - Added app-level `TelosConfig` and merge/env resolution helpers so static values can migrate into configuration over time
   - Added configurable curator surface: `TELOS_CURATOR_ENABLED`, `TELOS_CURATOR_PROVIDER`, `TELOS_CURATOR_HOST`, `TELOS_CURATOR_MODEL`, `TELOS_CURATOR_TOP_K`, `TELOS_CURATOR_TIMEOUT_MS`, `TELOS_CURATOR_ANCHOR_FILES`
-  - Default curator model is `snowflake-arctic-embed2:latest` via local Ollama host, with deterministic fallback when disabled
+  - Added provider-neutral distiller surface: `TELOS_DISTILLER_ENABLED`, `TELOS_DISTILLER_PROVIDER`, `TELOS_DISTILLER_MODEL`, `TELOS_DISTILLER_BASE_URL`, `TELOS_DISTILLER_API_KEY_ENV`, `TELOS_DISTILLER_TIMEOUT_MS`, `TELOS_DISTILLER_MAX_PRINCIPLES`
+  - Default curator model is `snowflake-arctic-embed2:latest`; default distiller model is `litellm/codex/gpt-5.4` behind an OpenAI-compatible endpoint
 - **Expanded Test Suite**
-  - 156 tests total
-  - Added tests for context entropy metrics, compacted warm memory, bounded chain rendering, compact inference objectives, sub-goal detail lookup, and config resolution
+  - 163 tests total
+  - Added tests for context entropy metrics, compacted warm memory, bounded chain rendering, compact inference objectives, sub-goal detail lookup, config resolution, and no-hidden-substitute distillation behavior
 
 ### Added (v0.3.0 - In Development)
 - **TUI Footer Enhancements** (`src/tui/footer.ts`)

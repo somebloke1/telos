@@ -28,6 +28,7 @@ import { GoalTools } from "./goal-tools.js";
 import { GoalContinuation } from "./goal-continuation.js";
 import { renderGoalFooter } from "./tui/footer.js";
 import { GoalChainManager, type GoalChain } from "./goal-chain.js";
+import { ChatCompletionGoalChainDistiller } from "./goal-chain-distiller.js";
 import { resolveTelosConfigFromEnv } from "./config.js";
 
 export default function (pi: ExtensionAPI) {
@@ -37,7 +38,7 @@ export default function (pi: ExtensionAPI) {
 
 	// Initialize managers with centralized Telos config so static values can migrate over time.
 	const telosConfig = resolveTelosConfigFromEnv();
-	const goalChainManager = new GoalChainManager(telosConfig);
+	const goalChainManager = new GoalChainManager(telosConfig, new ChatCompletionGoalChainDistiller());
 	let goalChainContinuationInProgress = false;
 	let lastGoalChainContinuationTime = 0;
 	let lastGoalHandoffNoticeTime = 0;
@@ -454,17 +455,21 @@ export default function (pi: ExtensionAPI) {
 				throw new Error("chain_id, sub_goal_id, and status parameters are required");
 			}
 
-			const updatedSubGoal = goalChainManager.updateSubGoalStatus(
+			const update = await goalChainManager.updateSubGoalStatusAsync(
 				params.chain_id,
 				params.sub_goal_id,
 				params.status,
 				params.learnings,
 			);
+			const updatedSubGoal = update.subGoal;
 			await goalChainManager.persistToSession(pi);
 
 			let message = `Sub-goal ${params.sub_goal_id} updated to ${params.status.toUpperCase()}`;
 			if (params.learnings && params.learnings.length > 0) {
 				message += `\n\nLearnings recorded:\n${params.learnings.map((l) => `  - ${l}`).join("\n")}`;
+			}
+			if (update.mutation) {
+				message += `\n\nReproductive clause mutated to v${update.mutation.newClause.version}: ${update.mutation.mutationReason}`;
 			}
 
 			return {
@@ -1217,7 +1222,7 @@ async function handleGoalChainCommand(
 					`- Source sub-goals: ${summary.sourceSubGoalCount}`,
 					`- Source records: ${summary.sourceRecordCount}`,
 					`- Archived sub-goals: ${summary.archivedSubGoalIds.length}`,
-					`- Curator: ${summary.curator.enabled ? `${summary.curator.provider}/${summary.curator.model}` : "deterministic fallback"}`,
+					`- Curator: ${summary.curator.enabled ? `${summary.curator.provider}/${summary.curator.model}` : "disabled (deterministic compaction only)"}`,
 					"- Stable learnings:",
 					...(summary.stableLearnings.length ? summary.stableLearnings.map((learning) => `  - ${learning}`) : ["  (none yet)"]),
 				].join("\n"),

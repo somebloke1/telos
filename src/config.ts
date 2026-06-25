@@ -8,6 +8,7 @@
  */
 
 export type GoalChainCuratorProvider = "none" | "ollama";
+export type GoalChainDistillerProvider = "none" | "openai-compatible";
 
 export interface GoalChainCuratorConfig {
 	enabled: boolean;
@@ -19,8 +20,19 @@ export interface GoalChainCuratorConfig {
 	anchorFiles: string[];
 }
 
+export interface GoalChainDistillerConfig {
+	enabled: boolean;
+	provider: GoalChainDistillerProvider;
+	model: string;
+	baseUrl: string;
+	apiKeyEnvVar: string;
+	timeoutMs: number;
+	maxPrinciples: number;
+}
+
 export interface GoalChainConfig {
 	curator: GoalChainCuratorConfig;
+	distiller: GoalChainDistillerConfig;
 }
 
 export interface TelosConfig {
@@ -38,33 +50,48 @@ export const DEFAULT_TELOS_CONFIG: TelosConfig = {
 			timeoutMs: 5000,
 			anchorFiles: ["ROADMAP.md", "README.md"],
 		},
+		distiller: {
+			enabled: false,
+			provider: "none",
+			model: "litellm/codex/gpt-5.4",
+			baseUrl: "",
+			apiKeyEnvVar: "OPENAI_API_KEY",
+			timeoutMs: 30000,
+			maxPrinciples: 8,
+		},
 	},
 };
 
 export type PartialTelosConfig = {
 	goalChain?: {
 		curator?: Partial<GoalChainCuratorConfig>;
+		distiller?: Partial<GoalChainDistillerConfig>;
 	};
 };
 
-function parseBooleanEnv(value: string | undefined, fallback: boolean): boolean {
-	if (value === undefined) return fallback;
+function parseBooleanEnv(value: string | undefined, defaultValue: boolean): boolean {
+	if (value === undefined) return defaultValue;
 	return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
 }
 
-function parsePositiveIntegerEnv(value: string | undefined, fallback: number): number {
+function parsePositiveIntegerEnv(value: string | undefined, defaultValue: number): number {
 	const parsed = Number.parseInt(value || "", 10);
-	return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : defaultValue;
 }
 
-function parseCsvEnv(value: string | undefined, fallback: string[]): string[] {
-	if (!value) return fallback;
+function parseCsvEnv(value: string | undefined, defaultValue: string[]): string[] {
+	if (!value) return defaultValue;
 	const parsed = value.split(",").map((item) => item.trim()).filter(Boolean);
-	return parsed.length > 0 ? parsed : fallback;
+	return parsed.length > 0 ? parsed : defaultValue;
 }
 
-function normalizeCuratorProvider(value: string | undefined, fallback: GoalChainCuratorProvider): GoalChainCuratorProvider {
-	return value === "ollama" || value === "none" ? value : fallback;
+function normalizeCuratorProvider(value: string | undefined, defaultValue: GoalChainCuratorProvider): GoalChainCuratorProvider {
+	return value === "ollama" || value === "none" ? value : defaultValue;
+}
+
+function normalizeDistillerProvider(value: string | undefined, defaultValue: GoalChainDistillerProvider): GoalChainDistillerProvider {
+	if (value === "litellm") return "openai-compatible";
+	return value === "openai-compatible" || value === "none" ? value : defaultValue;
 }
 
 export function mergeTelosConfig(config?: PartialTelosConfig): TelosConfig {
@@ -74,6 +101,10 @@ export function mergeTelosConfig(config?: PartialTelosConfig): TelosConfig {
 				...DEFAULT_TELOS_CONFIG.goalChain.curator,
 				...(config?.goalChain?.curator || {}),
 			},
+			distiller: {
+				...DEFAULT_TELOS_CONFIG.goalChain.distiller,
+				...(config?.goalChain?.distiller || {}),
+			},
 		},
 	};
 }
@@ -81,23 +112,38 @@ export function mergeTelosConfig(config?: PartialTelosConfig): TelosConfig {
 export function resolveTelosConfigFromEnv(
 	env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {},
 ): TelosConfig {
-	const defaults = DEFAULT_TELOS_CONFIG.goalChain.curator;
-	const enabled = parseBooleanEnv(env.TELOS_CURATOR_ENABLED, defaults.enabled);
-	const provider = normalizeCuratorProvider(
-		env.TELOS_CURATOR_PROVIDER || (enabled ? "ollama" : defaults.provider),
-		defaults.provider,
+	const curatorDefaults = DEFAULT_TELOS_CONFIG.goalChain.curator;
+	const curatorEnabled = parseBooleanEnv(env.TELOS_CURATOR_ENABLED, curatorDefaults.enabled);
+	const curatorProvider = normalizeCuratorProvider(
+		env.TELOS_CURATOR_PROVIDER || (curatorEnabled ? "ollama" : curatorDefaults.provider),
+		curatorDefaults.provider,
+	);
+	const distillerDefaults = DEFAULT_TELOS_CONFIG.goalChain.distiller;
+	const distillerEnabled = parseBooleanEnv(env.TELOS_DISTILLER_ENABLED, distillerDefaults.enabled);
+	const distillerProvider = normalizeDistillerProvider(
+		env.TELOS_DISTILLER_PROVIDER || (distillerEnabled ? "openai-compatible" : distillerDefaults.provider),
+		distillerDefaults.provider,
 	);
 
 	return mergeTelosConfig({
 		goalChain: {
 			curator: {
-				enabled,
-				provider,
-				host: env.TELOS_CURATOR_HOST || defaults.host,
-				model: env.TELOS_CURATOR_MODEL || defaults.model,
-				topK: parsePositiveIntegerEnv(env.TELOS_CURATOR_TOP_K, defaults.topK),
-				timeoutMs: parsePositiveIntegerEnv(env.TELOS_CURATOR_TIMEOUT_MS, defaults.timeoutMs),
-				anchorFiles: parseCsvEnv(env.TELOS_CURATOR_ANCHOR_FILES, defaults.anchorFiles),
+				enabled: curatorEnabled,
+				provider: curatorProvider,
+				host: env.TELOS_CURATOR_HOST || curatorDefaults.host,
+				model: env.TELOS_CURATOR_MODEL || curatorDefaults.model,
+				topK: parsePositiveIntegerEnv(env.TELOS_CURATOR_TOP_K, curatorDefaults.topK),
+				timeoutMs: parsePositiveIntegerEnv(env.TELOS_CURATOR_TIMEOUT_MS, curatorDefaults.timeoutMs),
+				anchorFiles: parseCsvEnv(env.TELOS_CURATOR_ANCHOR_FILES, curatorDefaults.anchorFiles),
+			},
+			distiller: {
+				enabled: distillerEnabled,
+				provider: distillerProvider,
+				model: env.TELOS_DISTILLER_MODEL || distillerDefaults.model,
+				baseUrl: env.TELOS_DISTILLER_BASE_URL || env.LITELLM_BASE_URL || distillerDefaults.baseUrl,
+				apiKeyEnvVar: env.TELOS_DISTILLER_API_KEY_ENV || distillerDefaults.apiKeyEnvVar,
+				timeoutMs: parsePositiveIntegerEnv(env.TELOS_DISTILLER_TIMEOUT_MS, distillerDefaults.timeoutMs),
+				maxPrinciples: parsePositiveIntegerEnv(env.TELOS_DISTILLER_MAX_PRINCIPLES, distillerDefaults.maxPrinciples),
 			},
 		},
 	});
