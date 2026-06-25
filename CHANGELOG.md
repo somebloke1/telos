@@ -33,9 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Added predefined development, testing, documentation, and refactoring templates
   - Added `/goal template list` and `/goal template use <id> [focus]` commands
   - Template-created goals reuse transparent large-objective storage and normal continuation behavior
+- **Smart Continuation** (`src/goal-continuation.ts`)
+  - Added adaptive continuation plans with initial, steady, budget-conservative, and context-handoff strategies
+  - Continuation prompts now include strategy, cadence, token budget state, context pressure, and next-step guidance
+  - Automatic continuation throttles based on budget consumption and context usage instead of a single fixed interval
 - **Expanded Test Suite**
-  - 169 tests total
-  - Added tests for context entropy metrics, compacted warm memory, bounded chain rendering, compact inference objectives, sub-goal detail lookup, config resolution, no-hidden-substitute distillation behavior, and objective templates
+  - 175 tests total
+  - Added tests for context entropy metrics, compacted warm memory, bounded chain rendering, compact inference objectives, sub-goal detail lookup, config resolution, no-hidden-substitute distillation behavior, objective templates, and smart continuation
 
 ### Added (v0.3.0 - In Development)
 - **TUI Footer Enhancements** (`src/tui/footer.ts`)

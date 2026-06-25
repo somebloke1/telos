@@ -91,11 +91,11 @@ Goal chains are now persisted in session data, so `/goalchain list`, `show`, and
 
 ### Automatic Continuation
 
-When a goal is active, Telos automatically triggers continuation turns when the session becomes idle. This keeps the LLM working toward the goal without manual intervention.
+When a goal is active, Telos automatically triggers continuation turns when the session becomes idle. Continuation steering is context-aware: it includes adaptive cadence guidance, budget usage, context pressure, and next-step guidance so follow-up turns continue from existing evidence instead of restarting investigation.
 
 ### Token Budget Tracking
 
-Set optional token budgets on goals to limit resource usage. Telos tracks token consumption and warns when approaching or exceeding the budget.
+Set optional token budgets on goals to limit resource usage. Telos tracks token consumption and warns when approaching or exceeding the budget. Automatic continuation becomes more conservative as token budget is consumed, and high context usage prompts handoff-oriented guidance.
 
 ### Adaptive GitHub Maintenance Automation
 
@@ -548,7 +548,7 @@ See `docs/research/codex_goal_feature_research.md` for detailed research notes o
 - No app-server protocol (Pi uses different architecture)
 - Goals are session-scoped rather than thread-scoped (Pi's session ≈ Codex's thread)
 - No desktop/app UI integration (TUI only)
-- Simplified continuation logic (no complex rollout/rollback)
+- Continuation strategy configuration is not user-tunable yet
 - Goals stored in session entries rather than SQLite
 - Goal chains are a Telos-specific feature not present in Codex
 - Evolutionary mutations require a configured async distiller for automatic principle extraction; without one, mutation is skipped rather than approximated

@@ -160,11 +160,12 @@ This document outlines the planned development roadmap for Telos.
 ## Version 0.5.0 - Enhanced Continuation
 
 ### Priority 2 Features
-- [ ] **Smart Continuation**
-  - Context-aware continuation prompts
-  - Variable continuation frequency
-  - Adaptive continuation based on progress
-  - Intelligent continuation triggering
+- [x] **Smart Continuation** (v0.5.0-alpha)
+  - Context-aware continuation prompts with strategy, budget, context usage, and next-step guidance
+  - Variable continuation frequency using adaptive intervals
+  - Conservative cadence when token budget is mostly consumed
+  - Handoff-oriented guidance when context usage is high
+  - Tests for initial, budget-conservative, context-handoff, and throttled continuation plans
 
 - [ ] **Continuation Strategies**
   - Multiple continuation modes (aggressive, balanced, conservative)
