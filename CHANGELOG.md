@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Goal-chain and single-goal continuation halt** (`src/index.ts`, `src/goal-continuation.ts`)
+  - Auto-continuation silently stopped whenever the agent finished a turn while the user was away from the keyboard, requiring manual `/goalchain continue` to resume
+  - Root cause: during `turn_end` extension handling, Pi's `isStreaming` is still `true` (it only clears after the awaited `turn_end` resolves), so `sendUserMessage(...)` with no streaming behavior threw and was swallowed by the Pi wrapper — the continuation was never queued
+  - Continuations are now delivered with `{ deliverAs: "followUp" }`, which queues into Pi's agent loop and is drained via `getFollowUpMessages` before `agent_end`, so the next turn reliably fires
+  - `turn_end` chain continuation no longer pre-empts the model's judgment when no sub-goals are queued: it passes `{ allowWithoutActionableSubGoals: true }` (continuous development never self-terminates while a chain is active; only the user pauses it)
+  - The no-actionable-subgoals steering message now directs the model to add/infer a next sub-goal, or — when sub-goals stop moving the needle — evolve at a more basic level via `mutate_reproductive_clause` instead of reporting "no queued work"
+- Added regression tests asserting `deliverAs: "followUp"` on the `triggerNow` and `checkContinuation` paths (baseline 175 → 177 passing)
+
 ### Added (v0.4.0-alpha)
 - **Goal Chain Cognitive Metabolism** (`src/goal-chain.ts`)
   - Added deterministic context entropy metrics: objective chars, record chars, oversized sub-goals, inferred context dumps, raw record count, completed count
