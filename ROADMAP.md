@@ -166,6 +166,9 @@ This document outlines the planned development roadmap for Telos.
   - Conservative cadence when token budget is mostly consumed
   - Handoff-oriented guidance when context usage is high
   - Tests for initial, budget-conservative, context-handoff, and throttled continuation plans
+- [x] **Continuation-halt fix** (v0.5.0-alpha)
+  - Fixed auto-continuation silently stopping on turn boundaries when the user was away from the keyboard (continuations are now delivered as `followUp` so they survive Pi's `turn_end` streaming window)
+  - Chain continuation no longer self-terminates when no sub-goals are queued; the model steers toward evolving at a more basic level via reproductive-clause mutation
 
 - [ ] **Continuation Strategies**
   - Multiple continuation modes (aggressive, balanced, conservative)

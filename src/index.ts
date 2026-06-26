@@ -30,6 +30,10 @@ import { renderGoalFooter } from "./tui/footer.js";
 import { GoalChainManager, type GoalChain } from "./goal-chain.js";
 import { ChatCompletionGoalChainDistiller } from "./goal-chain-distiller.js";
 import { resolveTelosConfigFromEnv } from "./config.js";
+import {
+	checkGoalChainContinuation,
+	createOneShotGoalChainContinuationState,
+} from "./goal-chain-continuation.js";
 
 export default function (pi: ExtensionAPI) {
 	const goalManager = new GoalManager();
@@ -176,7 +180,7 @@ export default function (pi: ExtensionAPI) {
 				lastGoalChainContinuationTime = value;
 			},
 			minInterval: MIN_GOAL_CHAIN_CONTINUATION_INTERVAL,
-		});
+		}, { allowWithoutActionableSubGoals: true });
 	});
 
 	// Track token usage for goals
@@ -1413,109 +1417,6 @@ async function handleGoalChainCommand(
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		ctx.ui.notify(`Goalchain command failed: ${message}`, "error");
-	}
-}
-
-function createOneShotGoalChainContinuationState(): {
-	isInProgress: () => boolean;
-	setInProgress: (value: boolean) => void;
-	getLastTime: () => number;
-	setLastTime: (value: number) => void;
-	minInterval: number;
-} {
-	let inProgress = false;
-	let lastTime = 0;
-	return {
-		isInProgress: () => inProgress,
-		setInProgress: (value: boolean) => {
-			inProgress = value;
-		},
-		getLastTime: () => lastTime,
-		setLastTime: (value: number) => {
-			lastTime = value;
-		},
-		minInterval: 0,
-	};
-}
-
-async function checkGoalChainContinuation(
-	goalChainManager: GoalChainManager,
-	pi: ExtensionAPI,
-	ctx: any,
-	state: {
-		isInProgress: () => boolean;
-		setInProgress: (value: boolean) => void;
-		getLastTime: () => number;
-		setLastTime: (value: number) => void;
-		minInterval: number;
-	},
-	options: { allowWithoutActionableSubGoals?: boolean; preferredChainId?: string } = {},
-): Promise<void> {
-	if (state.isInProgress()) {
-		return;
-	}
-
-	const now = Date.now();
-	if (now - state.getLastTime() < state.minInterval) {
-		return;
-	}
-
-	if (ctx?.isIdle && !ctx.isIdle()) {
-		return;
-	}
-
-	const activeChains = goalChainManager.getAllGoalChains().filter((chain) => chain.status === "active");
-	if (activeChains.length === 0) {
-		return;
-	}
-
-	const chain =
-		(options.preferredChainId && activeChains.find((activeChain) => activeChain.id === options.preferredChainId)) ||
-		activeChains[activeChains.length - 1];
-	const actionableSubGoals = chain.subGoals.filter((subGoal) =>
-		["pending", "active"].includes(subGoal.status),
-	);
-	if (actionableSubGoals.length === 0 && !options.allowWithoutActionableSubGoals) {
-		// No work is queued. Avoid repeatedly waking the agent just to say there is
-		// nothing to do; explicit /goalchain continue can still kick the agent.
-		return;
-	}
-
-	state.setInProgress(true);
-	state.setLastTime(now);
-	try {
-		const nextSubGoal =
-			actionableSubGoals.find((subGoal) => subGoal.status === "active") || actionableSubGoals[0];
-		const message = [
-			"CONTINUATION: You are continuing work on the active goal chain.",
-			"",
-			`Goal Chain: ${chain.id}`,
-			`Primary Goal: ${chain.primaryGoal}`,
-			`Generation: ${chain.currentGeneration} / ${chain.totalGenerations}`,
-			"",
-			"Instructions:",
-			"- Continue working toward the primary goal and reproductive clause.",
-			"- Use get_goal_chain to inspect current state before making decisions.",
-			"- If there are pending sub-goals, activate and work the next useful one.",
-			"- Record learnings when completing or blocking sub-goals.",
-			"- Do not mark work complete unless the goal chain objective is truly satisfied.",
-		];
-
-		if (nextSubGoal) {
-			message.push("", `Next sub-goal candidate: [${nextSubGoal.status.toUpperCase()}] ${nextSubGoal.id} - ${nextSubGoal.objective}`);
-		} else {
-			message.push(
-				"",
-				"No pending or active sub-goals are currently queued.",
-				"Action: inspect the chain, then add or infer the next sub-goal if the primary goal still requires work; otherwise report that the chain has no queued work.",
-			);
-		}
-
-		pi.sendUserMessage(message.join("\n"));
-	} catch (error) {
-		console.error("Failed to trigger goal chain continuation:", error);
-	} finally {
-		state.setInProgress(false);
 	}
 }
 

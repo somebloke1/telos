@@ -130,10 +130,13 @@ export class GoalContinuation {
 		this.lastContinuationTime = Date.now();
 
 		try {
-			// Inject continuation steering message
+			// Inject continuation steering message.
+			// deliverAs: followUp bridges into pi's agent loop: during turn_end
+			// handling isStreaming is still true, so without a streaming behavior
+			// sendUserMessage would throw and be swallowed (continuation never fires).
 			const plan = this.buildContinuationPlan(goal, ctx);
 			const steeringMessage = this.buildContinuationMessage(goal, plan);
-			this.pi.sendUserMessage(steeringMessage);
+			this.pi.sendUserMessage(steeringMessage, { deliverAs: "followUp" });
 			this.continuationCount += 1;
 		} catch (error) {
 			// Log error but don't throw
