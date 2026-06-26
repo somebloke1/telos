@@ -638,6 +638,10 @@ If commands don't work:
 2. Check agent is truly idle
 3. Verify continuation is enabled
 4. Wait minimum 2 seconds between turns
+5. If continuation stops on turn boundaries while the user is away from the
+   keyboard, this was a fixed bug — continuations are now delivered as
+   `followUp`. Restart Pi to pick up the fix. See
+   [docs/continuation-halt-postmortem.md](docs/continuation-halt-postmortem.md).
 
 ## License
 

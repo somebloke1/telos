@@ -82,10 +82,17 @@ GoalContinuation checks:
   ↓
 If all checks pass → Trigger continuation turn
   ↓
-Inject continuation steering message
+Inject continuation steering message (delivered as followUp)
+  ↓
+Pi's agent loop drains the follow-up queue before agent_end
   ↓
 New turn starts with goal context
 ```
+
+> **Note:** Continuations are delivered with `{ deliverAs: "followUp" }`
+> because `isStreaming` is still `true` during `turn_end` handling — a bare
+> `sendUserMessage` would throw and be swallowed, halting continuation.
+> See [continuation-halt-postmortem.md](continuation-halt-postmortem.md).
 
 ## Design Decisions
 
@@ -149,6 +156,9 @@ New turn starts with goal context
 - Only when agent is idle
 - Only when goal is active
 - Minimum 2-second interval between continuations
+- Delivered as `followUp` (not a bare `sendUserMessage`) so the message is
+  queued during the `turn_end` streaming window and drained by Pi's agent
+  loop before `agent_end`
 
 ### 6. Token Budget Implementation
 
