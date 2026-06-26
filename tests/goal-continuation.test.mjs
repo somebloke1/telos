@@ -7,12 +7,14 @@ function createContinuation(goalObjective = "Ship smart continuation", tokenBudg
 	const manager = new GoalManager();
 	manager.createGoal(goalObjective, tokenBudget);
 	const messages = [];
+	const calls = [];
 	const pi = {
-		sendUserMessage(message) {
+		sendUserMessage(message, options) {
 			messages.push(message);
+			calls.push({ message, options });
 		},
 	};
-	return { manager, continuation: new GoalContinuation(manager, pi), messages };
+	return { manager, continuation: new GoalContinuation(manager, pi), messages, calls };
 }
 
 function idleCtx(contextPercent) {
@@ -61,6 +63,25 @@ test("GoalContinuation triggerNow sends context-aware steering", async () => {
 	assert.match(messages[0], /Context Usage:/);
 	assert.match(messages[0], /Current context: 80% full/);
 	assert.match(messages[0], /smallest verifiable increment/);
+});
+
+test("GoalContinuation triggerNow delivers continuation as followUp so it survives the turn_end streaming window", async () => {
+	// Regression guard for the continuation halt: pi's isStreaming is still true
+	// during turn_end handling, so sendUserMessage without deliverAs would throw
+	// and be swallowed. The continuation must be queued as followUp.
+	const { continuation, calls } = createContinuation();
+	await continuation.triggerNow(idleCtx());
+	assert.equal(calls.length, 1);
+	assert.deepEqual(calls[0].options, { deliverAs: "followUp" },
+		"continuation sendUserMessage must pass { deliverAs: 'followUp' }");
+});
+
+test("GoalContinuation checkContinuation also delivers as followUp", async () => {
+	const { continuation, calls } = createContinuation();
+	continuation.enableContinuation();
+	await continuation.checkContinuation(idleCtx());
+	assert.equal(calls.length, 1);
+	assert.deepEqual(calls[0].options, { deliverAs: "followUp" });
 });
 
 test("GoalContinuation checkContinuation respects adaptive interval", async () => {
