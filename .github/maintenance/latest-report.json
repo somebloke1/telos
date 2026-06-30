@@ -1,16 +1,16 @@
 {
   "repository": "somebloke1/telos",
-  "runAt": "2026-06-29T20:36:44.229Z",
+  "runAt": "2026-06-30T00:37:10.116Z",
   "branch": "main",
   "activity": {
-    "score": 0.975,
-    "smoothedScore": 0.972,
+    "score": 0.979,
+    "smoothedScore": 0.976,
     "intervalHours": 4,
-    "commits7": 51,
-    "commits30": 51,
+    "commits7": 52,
+    "commits30": 52,
     "issues7": 6,
     "issues30": 6,
-    "previousScore": 0.971
+    "previousScore": 0.975
   },
   "checks": {
     "openPullRequests": 0,
